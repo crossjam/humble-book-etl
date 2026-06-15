@@ -128,8 +128,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title='Humble Bundle ETL API',
-    version='1.0.0',
-    description='API v1.0 - Scraper original de Humble Bundle. Trigger ETL and query stored bundles.',
+    version='1.0.1',
+    description='API v1.0.1 - Scraper original de Humble Bundle. Trigger ETL and query stored bundles.',
     lifespan=lifespan
 )
 
