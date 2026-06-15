@@ -1,4 +1,18 @@
 export default {
+  auth: {
+    loggedInAs: 'Sesión iniciada como',
+    logout: 'Cerrar sesión',
+    loginHint: 'Inicia sesión para ejecutar el ETL protegido.',
+    goToLogin: 'Ir a login',
+    backHome: 'Volver al dashboard',
+    loginTitle: 'Iniciar sesión',
+    loginHintLong: 'Tu contraseña se envía por HTTPS y el backend la hashea automáticamente.',
+    username: 'Usuario',
+    password: 'Contraseña',
+    signingIn: 'Ingresando...',
+    loginCta: 'Entrar',
+    loginSuccess: 'Sesión iniciada correctamente.'
+  },
   app: {
     eyebrow: 'Humble Tracker',
     title: 'Book bundles in real time',
@@ -135,6 +149,7 @@ export default {
     version: 'Versión:',
     openJson: '🔗 Abrir JSON',
     download: '⬇ Descargar',
+    viewJson: '🔍 Ver JSON',
     jsonData: 'JSON Data',
     copyJson: 'Copiar JSON',
     downloadJson: 'Descargar JSON',

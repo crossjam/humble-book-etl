@@ -1,13 +1,27 @@
+from pathlib import Path
+import os
+from api.security import create_access_token, decode_access_token, verify_password
+from api.schemas import (
+    BundleResponse,
+    ETLRunResponse,
+    LandingPageRawDataResponse,
+    LoginRequest,
+    TokenResponse,
+    UserResponse,
+)
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy import nulls_last, select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 import logging
+
+from jose import JWTError
 
 from spider.database.session import get_session_factory as build_session_factory
 from spider.database.persistence import (
@@ -17,58 +31,93 @@ from spider.database.persistence import (
 )
 from spider.core.spider import HumbleSpider
 from spider.core.errors import HumbleSpiderError
-from spider.database.models import Bundle, LandingPageRawData
+from spider.database.models import Bundle, LandingPageRawData, User
 from spider.config.settings import get_settings
+from spider.database.seed import ensure_admin_user
 
 logger = logging.getLogger(__name__)
 
-from api.schemas import (
-    BundleResponse,
-    ETLRunResponse,
-    LandingPageRawDataResponse,
-)
 
 settings = get_settings()
 SessionFactory = None
 AsyncSessionFactory = None
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl='/auth/login')
+
 
 def get_async_engine():
-    """Creates the async engine for FastAPI using SQLite."""
+    """Creates the async engine for FastAPI using SQLite or PostgreSQL."""
     from pathlib import Path
-    db_path = Path(settings.db_path)
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    uri = f'sqlite+aiosqlite:///{db_path.absolute()}'
+    from spider.database.session import build_database_uri
+
+    uri = build_database_uri(settings)
+
+    # Para async, necesitamos usar asyncpg para PostgreSQL
+    if settings.db_type == 'postgresql':
+        # Reemplazar postgresql:// con postgresql+asyncpg://
+        if uri.startswith('postgresql://'):
+            uri = uri.replace('postgresql://', 'postgresql+asyncpg://', 1)
+    else:  # sqlite
+        # Reemplazar sqlite:// con sqlite+aiosqlite://
+        if uri.startswith('sqlite:///'):
+            uri = uri.replace('sqlite:///', 'sqlite+aiosqlite:///', 1)
+
     return create_async_engine(uri, echo=settings.sql_echo, future=True)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan to initialize async resources."""
     global AsyncSessionFactory
     async_engine = get_async_engine()
-    
+
+    # Log database connection info
+    logger.info(f"Connecting to database: {settings.db_type.upper()}")
+    if settings.db_type == 'postgresql':
+        logger.info(f"PostgreSQL connection: {settings.pghost}:{
+                    settings.pgport}/{settings.pgdatabase}")
+    else:
+        logger.info(f"SQLite database path: {settings.db_path}")
+
     # Create tables if they don't exist using the async engine
     from spider.database.models import Base
     async with async_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all, checkfirst=True)
-    
+
     # Ensure columns exist (works better with sync)
     from spider.database.persistence import ensure_columns, ensure_landing_page_raw_data_table
+    from spider.database.session import build_database_uri
     from sqlalchemy import create_engine
-    from pathlib import Path
-    db_path = Path(settings.db_path)
-    db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    sync_uri = build_database_uri(settings)
+    connect_args = {}
+    if settings.db_type == 'sqlite':
+        connect_args = {'check_same_thread': False}
+
     sync_engine = create_engine(
-        f'sqlite:///{db_path.absolute()}',
+        sync_uri,
         echo=settings.sql_echo,
         future=True,
-        connect_args={'check_same_thread': False}
+        connect_args=connect_args
     )
     try:
         ensure_columns(sync_engine)
         ensure_landing_page_raw_data_table(sync_engine)
+        SessionLocal = sessionmaker(
+            bind=sync_engine, expire_on_commit=False, class_=Session)
+        try:
+            with SessionLocal() as sync_session:
+                result = ensure_admin_user(sync_session, settings)
+                if result == 'created':
+                    logger.info(
+                        "Usuario admin '%s' creado durante el inicio de la API.", settings.admin_username)
+                elif result == 'updated':
+                    logger.info(
+                        "Usuario admin '%s' actualizado durante el inicio de la API.", settings.admin_username)
+        except Exception as exc:
+            logger.error("Error seeding admin user: %s", exc)
     finally:
         sync_engine.dispose()
-    
+
     AsyncSessionFactory = async_sessionmaker(
         async_engine,
         class_=AsyncSession,
@@ -79,8 +128,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title='Humble Bundle ETL API',
-    version='1.0.0',
-    description='API v1.0 - Scraper original de Humble Bundle. Trigger ETL and query stored bundles.',
+    version='1.0.1',
+    description='API v1.0.1 - Scraper original de Humble Bundle. Trigger ETL and query stored bundles.',
     lifespan=lifespan
 )
 
@@ -90,6 +139,7 @@ allowed_origins = [
     'http://frontend:3002',
     'http://localhost:3003',
     'http://127.0.0.1:3003',
+    'https://projects.dopeldev.com',
 ]
 
 app.add_middleware(
@@ -101,8 +151,6 @@ app.add_middleware(
 )
 
 # Montar directorio de imágenes estáticas (local development)
-import os
-from pathlib import Path
 
 # Usar ruta relativa al directorio del proyecto
 images_dir = Path(__file__).parent.parent / "images"
@@ -142,6 +190,46 @@ async def get_async_db():
             await session.close()
 
 
+def get_current_user(
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db),
+) -> User:
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail='Credenciales inválidas',
+        headers={'WWW-Authenticate': 'Bearer'},
+    )
+    try:
+        payload = decode_access_token(token, settings)
+        user_id: str | None = payload.get('sub')
+        if user_id is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+    user = db.get(User, user_id)
+    if user is None:
+        raise credentials_exception
+    return user
+
+
+@app.post('/auth/login', response_model=TokenResponse, tags=['auth'])
+def login(credentials: LoginRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.username == credentials.username).first()
+    if not user or not verify_password(credentials.password, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail='Usuario o contraseña inválidos',
+        )
+    access_token = create_access_token(
+        {'sub': user.id, 'username': user.username}, settings)
+    return TokenResponse(access_token=access_token, user=user)
+
+
+@app.get('/auth/me', response_model=UserResponse, tags=['auth'])
+def read_current_user(current_user: User = Depends(get_current_user)):
+    return current_user
+
+
 @app.get('/health', tags=['health'])
 async def healthcheck():
     return {'status': 'ok', 'database': settings.db_path}
@@ -157,7 +245,8 @@ async def get_featured_bundle(db: AsyncSession = Depends(get_async_db)):
     )
     bundle = result.scalar_one_or_none()
     if not bundle:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='No bundles stored')
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail='No bundles stored')
     return bundle
 
 
@@ -178,7 +267,8 @@ async def get_bundle(bundle_id: str, db: AsyncSession = Depends(get_async_db)):
     )
     bundle = result.scalar_one_or_none()
     if not bundle:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Bundle not found')
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail='Bundle not found')
     return bundle
 
 
@@ -190,27 +280,32 @@ async def get_bundle_by_machine_name(machine_name: str, db: AsyncSession = Depen
     )
     bundle = result.scalar_one_or_none()
     if not bundle:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Bundle not found')
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail='Bundle not found')
     return bundle
 
 
 @app.post('/etl/run', response_model=ETLRunResponse, tags=['etl'])
-def trigger_etl(db: Session = Depends(get_db)):
+def trigger_etl(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """Executes the ETL: downloads bundles and saves to the database."""
     spider = HumbleSpider()
     try:
         records = spider.fetch_bundles()
     except HumbleSpiderError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
     remove_outdated_bundles(db)
     persist_bundles(records, db)
-    
+
     # Save landing page raw data
     raw_data_record = spider.get_raw_data_record()
     if raw_data_record:
         persist_landing_page_raw_data(raw_data_record, db)
-    
+
     return ETLRunResponse(
         bundles_processed=len(records),
         cleanup_ran=True
@@ -221,7 +316,8 @@ def trigger_etl(db: Session = Depends(get_db)):
 async def list_landing_page_raw_data(db: AsyncSession = Depends(get_async_db)):
     """Lists all raw data records ordered by descending date."""
     result = await db.execute(
-        select(LandingPageRawData).order_by(LandingPageRawData.scraped_date.desc())
+        select(LandingPageRawData).order_by(
+            LandingPageRawData.scraped_date.desc())
     )
     raw_data_list = result.scalars().all()
     return raw_data_list
@@ -231,11 +327,13 @@ async def list_landing_page_raw_data(db: AsyncSession = Depends(get_async_db)):
 async def get_latest_landing_page_raw_data(db: AsyncSession = Depends(get_async_db)):
     """Gets the most recent raw data record."""
     result = await db.execute(
-        select(LandingPageRawData).order_by(LandingPageRawData.scraped_date.desc()).limit(1)
+        select(LandingPageRawData).order_by(
+            LandingPageRawData.scraped_date.desc()).limit(1)
     )
     raw_data = result.scalar_one_or_none()
     if not raw_data:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='No raw data stored')
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail='No raw data stored')
     return raw_data
 
 
@@ -247,7 +345,6 @@ async def get_landing_page_raw_data(raw_data_id: str, db: AsyncSession = Depends
     )
     raw_data = result.scalar_one_or_none()
     if not raw_data:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Raw data not found')
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail='Raw data not found')
     return raw_data
-
-

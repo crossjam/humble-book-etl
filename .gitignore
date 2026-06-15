@@ -1,8 +1,10 @@
-api/env/*
-env/*
+.venv/*
+.env
 **/__pycache__/
 __pycache__/
 .cursor/
 node_modules/
 *.tsbuildinfo
 .tsbuild/
+humble_bundle.db
+frontend/dist/
