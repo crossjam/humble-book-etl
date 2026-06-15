@@ -1,66 +1,67 @@
 # Humble Scrape
 
-ETL + API FastAPI + frontend Vue para extraer bundles publicos de
-[Humble Bundle Books](https://www.humblebundle.com/books), normalizarlos,
-persistirlos con SQLAlchemy y consultarlos desde una interfaz web.
+ETL + FastAPI API + Vue frontend for extracting public bundles from
+[Humble Bundle Books](https://www.humblebundle.com/books), normalizing them,
+persisting them with SQLAlchemy, and browsing them through a web interface.
 
-## Estado Actual
+## Current Status
 
-Release del repositorio: `1.0.1`.
+Repository release: `1.0.1`.
 
-La rama de referencia para esta release es `prod`. El estado real del proyecto
-en esta rama no es "solo SQLite": la aplicacion soporta dos modos de base de
-datos mediante `DB_DB_TYPE`.
+The reference branch for this release is `prod`. The real state of this branch
+is not "SQLite only": the application supports two database modes through
+`DB_DB_TYPE`.
 
-- `postgresql`: modo usado por Docker Compose y la ruta de produccion.
-- `sqlite`: modo local de desarrollo, usado por defecto si no configuras
-  `DB_DB_TYPE`.
+- `postgresql`: used by Docker Compose and the production path.
+- `sqlite`: local development mode, used by default when `DB_DB_TYPE` is not
+  configured.
 
-Evidencia en el proyecto:
+Evidence in the project:
 
-- `spider/config/settings.py` define `DB_DB_TYPE=sqlite|postgresql` y variables
-  `DB_PGUSER`, `DB_PGPASSWORD`, `DB_PGDATABASE`, `DB_PGHOST`, `DB_PGPORT`.
-- `spider/database/session.py` construye URIs `postgresql://...` o
-  `sqlite:///...` segun `DB_DB_TYPE`.
-- `api/main.py` usa `postgresql+asyncpg://` para sesiones async de FastAPI y
-  `sqlite+aiosqlite://` para SQLite.
-- `requirements.txt` incluye drivers PostgreSQL (`psycopg`, `psycopg-binary`,
-  `psycopg2-binary`, `asyncpg`) y SQLite (`aiosqlite`).
-- `docker-compose*.yml` levanta `postgres:16-alpine` y fuerza el backend a
+- `spider/config/settings.py` defines `DB_DB_TYPE=sqlite|postgresql` and the
+  `DB_PGUSER`, `DB_PGPASSWORD`, `DB_PGDATABASE`, `DB_PGHOST`, and `DB_PGPORT`
+  variables.
+- `spider/database/session.py` builds either `postgresql://...` or
+  `sqlite:///...` URIs according to `DB_DB_TYPE`.
+- `api/main.py` uses `postgresql+asyncpg://` for FastAPI async sessions and
+  `sqlite+aiosqlite://` for SQLite.
+- `requirements.txt` includes PostgreSQL drivers (`psycopg`, `psycopg-binary`,
+  `psycopg2-binary`, `asyncpg`) and SQLite support (`aiosqlite`).
+- `docker-compose*.yml` starts `postgres:16-alpine` and forces the backend to
   `DB_DB_TYPE=postgresql`.
-- `humble_bundle.db` fue removido del tracking en `prod`; SQLite queda como
-  fallback local, no como base principal de produccion.
+- `humble_bundle.db` was removed from tracking in `prod`; SQLite remains a
+  local fallback, not the main production database.
 
 ## Stack
 
 - Python 3.12+ / 3.13
 - FastAPI + Uvicorn
 - SQLAlchemy 2
-- PostgreSQL 16 via Docker Compose para produccion
-- SQLite + aiosqlite para desarrollo local opcional
-- Requests + BeautifulSoup4 para scraping
-- pandas + Pydantic + pydantic-settings para normalizacion y configuracion
-- JWT con `python-jose`
-- Password hashing con `bcrypt(SHA-256(password))`
+- PostgreSQL 16 through Docker Compose for production
+- SQLite + aiosqlite for optional local development
+- Requests + BeautifulSoup4 for scraping
+- pandas + Pydantic + pydantic-settings for normalization and configuration
+- JWT with `python-jose`
+- Password hashing with `bcrypt(SHA-256(password))`
 - Vue 3 + Vite + TypeScript + Vue Router
 - axios, vue-i18n, Sass, ESLint, Stylelint, Vitest
 
-## Requisitos
+## Requirements
 
-1. Python 3.12 o 3.13 con `venv` y `pip`.
-2. Node.js 20+ para desarrollo frontend.
-3. Docker y Docker Compose para levantar la pila con PostgreSQL.
-4. Acceso de red para ejecutar el ETL contra Humble Bundle.
+1. Python 3.12 or 3.13 with `venv` and `pip`.
+2. Node.js 20+ for frontend development.
+3. Docker and Docker Compose for running the PostgreSQL stack.
+4. Network access to run the ETL against Humble Bundle.
 
-## Configuracion
+## Configuration
 
-Copia el ejemplo y ajusta secretos antes de levantar servicios:
+Copy the example file and adjust secrets before starting services:
 
 ```bash
 cp .env.example .env
 ```
 
-Variables relevantes:
+Relevant variables:
 
 ```env
 DB_DB_TYPE=postgresql
@@ -82,36 +83,36 @@ VITE_API_BASE_URL=http://localhost:5002
 FRONTEND_PORT=3002
 ```
 
-Notas:
+Notes:
 
-- En Docker Compose, el servicio `api` fuerza `DB_DB_TYPE=postgresql` y usa el
-  host interno `postgres`.
-- Para ejecucion local sin Docker, puedes usar SQLite con
-  `DB_DB_TYPE=sqlite` y `DB_DB_PATH=humble_bundle.db`.
-- Para usar PostgreSQL fuera de Docker, define `DB_DB_TYPE=postgresql` y apunta
-  `DB_PGHOST` al host real de tu base.
+- In Docker Compose, the `api` service forces `DB_DB_TYPE=postgresql` and uses
+  the internal `postgres` host.
+- For local execution without Docker, use SQLite with `DB_DB_TYPE=sqlite` and
+  `DB_DB_PATH=humble_bundle.db`.
+- To use PostgreSQL outside Docker, set `DB_DB_TYPE=postgresql` and point
+  `DB_PGHOST` to the real database host.
 
 ## Docker Compose
 
-Ruta recomendada para `prod`:
+Recommended path for `prod`:
 
 ```bash
 docker compose up -d --build
 ```
 
-Servicios:
+Services:
 
-- `postgres`: PostgreSQL 16 con volumen `postgres_data`.
-- `api`: FastAPI en `http://localhost:5002`.
-- `frontend`: Vite preview/container en `http://localhost:${FRONTEND_PORT:-3002}`.
+- `postgres`: PostgreSQL 16 with the `postgres_data` volume.
+- `api`: FastAPI on `http://localhost:5002`.
+- `frontend`: Vite preview/container on `http://localhost:${FRONTEND_PORT:-3002}`.
 
-Comandos Makefile:
+Makefile commands:
 
-- `make docker-up`: levanta `docker compose up -d`.
-- `make docker-down`: detiene servicios y elimina volumenes con `down -v`.
-- `make docker-restart`: reconstruye contenedores desde cero.
+- `make docker-up`: runs `docker compose up -d`.
+- `make docker-down`: stops services and removes volumes with `down -v`.
+- `make docker-restart`: recreates containers from a fresh build.
 
-## Instalacion Local
+## Local Installation
 
 Backend:
 
@@ -131,88 +132,89 @@ npm install
 npm run dev
 ```
 
-Variables frontend:
+Frontend variable:
 
 ```env
 VITE_API_BASE_URL=http://localhost:5002
 ```
 
-El cliente frontend usa `VITE_API_BASE_URL` si existe. Si no existe, cae a
-`/humblebundlespider/api`, que sirve para despliegues bajo subruta/proxy.
+The frontend client uses `VITE_API_BASE_URL` when it is set. Otherwise it falls
+back to `/humblebundlespider/api`, which supports deployments under a proxied
+subpath.
 
-## Comandos
+## Commands
 
-- `make etl`: ejecuta `python -m spider.cli.run_spider`.
-- `make api`: levanta FastAPI local en `http://0.0.0.0:5002`.
-- `make db-init`: inicializa tablas usando la configuracion `DB_*` actual.
-- `make db-reset`: elimina solo el archivo SQLite local `humble_bundle.db`.
-- `make frontend-dev`: levanta Vite en `http://localhost:3002`.
-- `make frontend-build`: ejecuta el build de produccion del frontend.
-- `make docker-up`: levanta la pila Docker con PostgreSQL.
-- `make docker-down`: detiene la pila Docker y borra volumenes.
-- `make docker-restart`: recrea la pila Docker con build nuevo.
+- `make etl`: runs `python -m spider.cli.run_spider`.
+- `make api`: starts FastAPI locally on `http://0.0.0.0:5002`.
+- `make db-init`: initializes tables with the current `DB_*` configuration.
+- `make db-reset`: removes only the local SQLite file `humble_bundle.db`.
+- `make frontend-dev`: starts Vite on `http://localhost:3002`.
+- `make frontend-build`: builds the frontend for production.
+- `make docker-up`: starts the Docker stack with PostgreSQL.
+- `make docker-down`: stops the Docker stack and removes volumes.
+- `make docker-restart`: recreates the Docker stack with a fresh build.
 
-Importante: `make db-reset` no resetea PostgreSQL. Para limpiar la base Docker,
-usa `make docker-down` o `docker compose down -v`.
+Important: `make db-reset` does not reset PostgreSQL. To clear the Docker
+database, use `make docker-down` or `docker compose down -v`.
 
 ## ETL
 
 ```bash
 source .venv/bin/activate
 python -m spider.cli.run_spider
-# o
+# or
 make etl
 ```
 
-Flujo:
+Flow:
 
-1. Descarga `https://www.humblebundle.com/books`.
-2. Extrae `script#landingPage-json-data`.
-3. Normaliza productos con pandas.
-4. Convierte fechas, URLs, listas JSON y metricas derivadas.
-5. Entra a cada pagina de bundle y lee `webpack-bundle-page-data`.
-6. Extrae tiers, libros, MSRP total y HTML bruto.
-7. Valida con Pydantic.
-8. Elimina bundles expirados.
-9. Persiste bundles por `machine_name` y guarda snapshots raw con hash.
+1. Downloads `https://www.humblebundle.com/books`.
+2. Extracts `script#landingPage-json-data`.
+3. Normalizes products with pandas.
+4. Converts dates, URLs, JSON lists, and derived metrics.
+5. Visits each bundle page and reads `webpack-bundle-page-data`.
+6. Extracts tiers, books, total MSRP, and raw HTML.
+7. Validates records with Pydantic.
+8. Removes expired bundles.
+9. Persists bundles by `machine_name` and stores raw snapshots with hashes.
 
 ## API
 
-La metadata de FastAPI para esta release es `1.0.1`.
+The FastAPI metadata for this release is `1.0.1`.
 
-Endpoints publicos:
+Public endpoints:
 
-- `GET /health`: estado del servicio.
-- `GET /bundles`: lista de bundles ordenada por fecha de cierre.
-- `GET /bundles/{bundle_id}`: bundle por UUID.
-- `GET /bundles/by-machine-name/{machine_name}`: bundle por `machine_name`.
-- `GET /bundles/featured`: bundle destacado por MSRP y ventas.
-- `GET /landing-page-raw-data`: snapshots raw.
-- `GET /landing-page-raw-data/latest`: ultimo snapshot raw.
-- `GET /landing-page-raw-data/{raw_data_id}`: snapshot raw por UUID.
+- `GET /health`: service status.
+- `GET /bundles`: bundles ordered by closing date.
+- `GET /bundles/{bundle_id}`: bundle by UUID.
+- `GET /bundles/by-machine-name/{machine_name}`: bundle by `machine_name`.
+- `GET /bundles/featured`: featured bundle by MSRP and sales.
+- `GET /landing-page-raw-data`: raw snapshots.
+- `GET /landing-page-raw-data/latest`: latest raw snapshot.
+- `GET /landing-page-raw-data/{raw_data_id}`: raw snapshot by UUID.
 
-Autenticacion:
+Authentication endpoints:
 
-- `POST /auth/login`: valida usuario y password, devuelve JWT.
-- `GET /auth/me`: devuelve el usuario autenticado.
+- `POST /auth/login`: validates username/password and returns a JWT.
+- `GET /auth/me`: returns the authenticated user.
 
-Endpoint protegido:
+Protected endpoint:
 
-- `POST /etl/run`: ejecuta ETL y requiere `Authorization: Bearer <token>`.
+- `POST /etl/run`: runs the ETL and requires `Authorization: Bearer <token>`.
 
-## Autenticacion
+## Authentication
 
-El modelo `User` se persiste en la misma base configurada por `DB_DB_TYPE`.
+The `User` model is persisted in the same database configured by `DB_DB_TYPE`.
 
-Seed automatico:
+Automatic seed:
 
-1. Define `DB_ADMIN_USERNAME` y `DB_ADMIN_EMAIL`.
-2. Define una de estas variables:
-   - `DB_ADMIN_PASSWORD_PLAIN`: password en texto plano; el backend lo normaliza.
-   - `DB_ADMIN_PASSWORD_SHA`: SHA-256 hex de 64 caracteres.
-3. Al iniciar la API, `ensure_admin_user` crea o actualiza el usuario.
+1. Define `DB_ADMIN_USERNAME` and `DB_ADMIN_EMAIL`.
+2. Define one of these variables:
+   - `DB_ADMIN_PASSWORD_PLAIN`: plain password; the backend normalizes it.
+   - `DB_ADMIN_PASSWORD_SHA`: 64-character SHA-256 hex digest.
+3. When the API starts, `ensure_admin_user` creates or updates the user.
 
-Comandos utiles:
+Useful commands:
 
 ```bash
 python -m spider.cli.create_user \
@@ -225,25 +227,27 @@ python -m spider.cli.hash_password --password "admin_password"
 
 Hashing:
 
-- El backend normaliza passwords como `SHA-256(plain)` si recibe texto plano.
-- El hash final almacenado es `bcrypt(SHA-256(password))`.
-- `api/security.py` acepta texto plano o SHA-256 hex para operaciones manuales.
+- The backend normalizes passwords as `SHA-256(plain)` when it receives plain
+  text.
+- The stored hash is `bcrypt(SHA-256(password))`.
+- `api/security.py` accepts plain text or SHA-256 hex input for manual
+  operations.
 
 ## Frontend
 
-El frontend es una SPA Vue 3 con router:
+The frontend is a Vue 3 SPA with router:
 
-- `/`: vista principal con bundles, utilidades y controles.
-- `/login`: login contra `POST /auth/login`.
+- `/`: main view with bundles, utilities, and controls.
+- `/login`: login against `POST /auth/login`.
 
-Caracteristicas:
+Features:
 
-- Tema claro/oscuro.
-- Selector de idioma `es`/`en`.
-- Sesion JWT en `localStorage`.
-- Boton flotante de logout.
-- Ejecucion de ETL desde UI cuando hay token.
-- Vistas de bundles y raw data con utilidades para abrir/descargar JSON.
+- Light/dark theme.
+- `es`/`en` language switcher.
+- JWT session stored in `localStorage`.
+- Floating logout button.
+- ETL execution from the UI when a token is available.
+- Bundle and raw data views with JSON open/download utilities.
 
 Scripts:
 
@@ -255,46 +259,46 @@ Scripts:
 - `npm run test:run`
 - `npm run test:coverage`
 
-## Arquitectura
+## Architecture
 
-- `api/`: FastAPI, auth, schemas HTTP y endpoints.
-- `spider/core/`: `HumbleSpider` y errores de dominio.
-- `spider/scrapers/`: scraper de detalle por bundle.
-- `spider/database/`: modelos SQLAlchemy, sesion, persistencia y seed de usuario.
-- `spider/schemas/`: modelos Pydantic del ETL.
-- `spider/config/`: settings `DB_*`.
-- `spider/cli/`: comandos para ETL, creacion de usuario y hash de password.
-- `frontend/src/views/`: vistas principales con Vue Router.
-- `frontend/src/components/`: cards, utilidades, UI base y controles flotantes.
-- `frontend/src/composables/`: auth, bundles, raw data, responsive y dark mode.
-- `docker-compose*.yml`: pila PostgreSQL + API + frontend.
-- `tests/`: pruebas backend de seguridad.
+- `api/`: FastAPI, auth, HTTP schemas, and endpoints.
+- `spider/core/`: `HumbleSpider` and domain errors.
+- `spider/scrapers/`: per-bundle detail scraper.
+- `spider/database/`: SQLAlchemy models, sessions, persistence, and user seed.
+- `spider/schemas/`: ETL Pydantic models.
+- `spider/config/`: `DB_*` settings.
+- `spider/cli/`: ETL, user creation, and password hash commands.
+- `frontend/src/views/`: main Vue Router views.
+- `frontend/src/components/`: cards, utilities, base UI, and floating controls.
+- `frontend/src/composables/`: auth, bundles, raw data, responsive, dark mode.
+- `docker-compose*.yml`: PostgreSQL + API + frontend stack.
+- `tests/`: backend security tests.
 
-## Base De Datos
+## Database
 
-Tablas actuales:
+Current tables:
 
-- `bundle`: metadata normalizada, fechas, estado activo, tiers, libros,
-  imagenes, MSRP y HTML bruto.
-- `landing_page_raw_data`: snapshots del JSON `landingPage-json-data`, fecha,
-  URL fuente, hash y version opcional.
-- `user`: usuarios de autenticacion con `username`, `email`, `password_hash` y
+- `bundle`: normalized metadata, dates, active state, tiers, books, images,
+  MSRP, and raw HTML.
+- `landing_page_raw_data`: snapshots of `landingPage-json-data`, date, source
+  URL, hash, and optional version.
+- `user`: authentication users with `username`, `email`, `password_hash`, and
   `created_at`.
 
-Modo PostgreSQL:
+PostgreSQL mode:
 
-- Activado con `DB_DB_TYPE=postgresql`.
-- Requiere `DB_PGUSER`, `DB_PGPASSWORD` y `DB_PGDATABASE`.
-- Usa `psycopg` para operaciones sync y `asyncpg` para FastAPI async.
-- En Docker, `DB_PGHOST=postgres`.
+- Enabled with `DB_DB_TYPE=postgresql`.
+- Requires `DB_PGUSER`, `DB_PGPASSWORD`, and `DB_PGDATABASE`.
+- Uses `psycopg` for sync operations and `asyncpg` for FastAPI async sessions.
+- In Docker, `DB_PGHOST=postgres`.
 
-Modo SQLite:
+SQLite mode:
 
-- Activado con `DB_DB_TYPE=sqlite`.
-- Usa `DB_DB_PATH=humble_bundle.db`.
-- Esta pensado para desarrollo local y pruebas rapidas.
+- Enabled with `DB_DB_TYPE=sqlite`.
+- Uses `DB_DB_PATH=humble_bundle.db`.
+- Intended for local development and quick tests.
 
-## Verificacion
+## Verification
 
 Backend:
 
