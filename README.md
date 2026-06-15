@@ -1,111 +1,199 @@
 # Humble Scrape
 
-ETL pipeline + API v1.0 + frontend to fetch public bundles from [Humble Bundle Books](https://www.humblebundle.com/books), normalize them and store them in SQLite.
+Pipeline ETL + API FastAPI + frontend Vue para obtener bundles publicos de
+[Humble Bundle Books](https://www.humblebundle.com/books), normalizarlos,
+enriquecerlos con datos de detalle, guardarlos en SQLite y explorarlos desde una
+interfaz web.
 
-## Main Stack
-- Python 3.13 (3.12+ recommended)
-- BeautifulSoup4 + Requests for scraping
-- Pandas + Pydantic + Pydantic Settings for normalization and configuration
-- SQLAlchemy 2 + SQLite (local development)
-- FastAPI v1.0 + Uvicorn for the API
-- Vue 3 + Vite + TypeScript for the interface
+## Estado actual
 
-## Requirements
-1. Python 3.12 or 3.13 with `venv` and updated `pip`.
-2. Node.js 20+ (for the frontend).
+Esta version del proyecto esta lista para etiquetarse como release `1.0.0`.
 
-## Backend Setup
+- Spider Python que lee `landingPage-json-data` desde `/books`, normaliza los
+  productos con pandas y valida registros con Pydantic.
+- Enriquecimiento por bundle desde `webpack-bundle-page-data`: tiers de precio,
+  lista de libros, MSRP total, imagen destacada y HTML bruto para auditoria.
+- Persistencia SQLite con SQLAlchemy: upsert de bundles por `machine_name`,
+  limpieza de bundles expirados y snapshots del JSON bruto de landing page con
+  hash SHA-256.
+- API FastAPI declarada como `1.0.0` con endpoints de bundles, ejecucion ETL y
+  consulta de raw data.
+- Frontend Vue 3 + Vite + TypeScript con tema claro/oscuro, i18n `es`/`en`,
+  vistas responsive desktop/mobile y utilidades para inspeccionar o descargar
+  JSON de bundles y raw data.
+- Tests frontend configurados con Vitest + Vue Test Utils + happy-dom. La
+  cobertura actual esta enfocada en `LandingPageRawDataUtility`.
+
+## Stack
+
+- Python 3.12+ / 3.13
+- Requests + BeautifulSoup4 para scraping
+- pandas + Pydantic + pydantic-settings para normalizacion y configuracion
+- SQLAlchemy 2 + SQLite + aiosqlite
+- FastAPI + Uvicorn
+- Vue 3 + Vite 6 + TypeScript
+- axios, vue-i18n, Sass, ESLint, Stylelint, Vitest
+
+## Requisitos
+
+1. Python 3.12 o 3.13 con `venv` y `pip`.
+2. Node.js 20+ para el frontend.
+3. Acceso de red para ejecutar el ETL contra Humble Bundle.
+
+## Instalacion backend
+
 ```bash
 git clone <repo>
 cd humbleBundle
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-make db-init  # Inicializar base de datos SQLite
+make db-init
 ```
 
-### Environment Variables (.env)
+Variables opcionales en `.env`:
+
 ```env
 DB_DB_PATH=humble_bundle.db
 DB_SQL_ECHO=false
 ```
 
-## Quick Makefile
-- `make etl` – Run the ETL pipeline (uses `python -m spider.cli.run_spider`).
-- `make api` – Start FastAPI with Uvicorn locally (http://0.0.0.0:5002).
-- `make db-init` – Create SQLite database and tables.
-- `make db-reset` – Delete and recreate SQLite database.
-- `make frontend-dev` – Run frontend development server.
-- `make frontend-build` – Build frontend for production.
+## Comandos principales
 
-## Run ETL via CLI
+- `make etl`: ejecuta `python -m spider.cli.run_spider`.
+- `make api`: levanta FastAPI en `http://0.0.0.0:5002`.
+- `make db-init`: crea la base SQLite y sus tablas si faltan.
+- `make db-reset`: elimina `humble_bundle.db`; luego ejecuta `make db-init`.
+- `make frontend-dev`: levanta Vite en `http://localhost:3002`.
+- `make frontend-build`: ejecuta el build de produccion del frontend.
+
+## Ejecutar el ETL
+
 ```bash
 source .venv/bin/activate
 python -m spider.cli.run_spider
-# or
+# o
 make etl
 ```
-The command:
-1. Fetches the JSON embedded in Humble Bundle's landing page.
-2. Normalizes products with Pandas, enriches each bundle with individual details (price tiers, book list, MSRP, tile_logo) and validates with Pydantic.
-3. Removes expired bundles and performs `upserts` in the `bundle` table in SQLite.
 
-## FastAPI API v1.0
+El flujo hace lo siguiente:
+
+1. Descarga la pagina publica de Humble Bundle Books.
+2. Extrae el JSON embebido en `script#landingPage-json-data`.
+3. Normaliza campos, fechas, URLs, listas JSON y metricas derivadas.
+4. Consulta cada pagina de bundle para extraer tiers, libros, MSRP y HTML bruto.
+5. Valida con Pydantic, elimina bundles expirados y persiste con upserts en
+   SQLite.
+6. Guarda un snapshot del JSON bruto de landing page para trazabilidad.
+
+## API FastAPI
+
 ```bash
 source .venv/bin/activate
 uvicorn api.main:app --reload --host 0.0.0.0 --port 5002
-# or
+# o
 make api
 ```
-Key endpoints:
-- `GET /health`: service status.
-- `GET /bundles`: complete list ordered by closing date.
-- `GET /bundles/{bundle_id}`: details by UUID.
-- `GET /bundles/by-machine-name/{machine_name}`: backward compatibility by `machine_name`.
-- `GET /bundles/featured`: featured bundle according to total MSRP and sales.
-- `POST /etl/run`: triggers the spider, removes expired bundles and persists the result.
-- `GET /landing-page-raw-data`: list of raw data records.
 
-**Note**: API v1.0 includes only the original scraper (HumbleSpider).
+Endpoints disponibles:
 
-## Frontend (Vue + Vite)
-The `frontend/` folder contains a SPA that replicates the original site's look & feel and consumes the API.
+- `GET /health`: estado del servicio y ruta de base de datos.
+- `GET /bundles`: lista completa ordenada por fecha de cierre.
+- `GET /bundles/{bundle_id}`: detalle por UUID.
+- `GET /bundles/by-machine-name/{machine_name}`: compatibilidad por
+  `machine_name`.
+- `GET /bundles/featured`: bundle destacado por MSRP total y ventas.
+- `POST /etl/run`: dispara el spider, limpia expirados y persiste el resultado.
+- `GET /landing-page-raw-data`: lista de snapshots raw.
+- `GET /landing-page-raw-data/latest`: ultimo snapshot raw guardado.
+- `GET /landing-page-raw-data/{raw_data_id}`: snapshot raw por UUID.
+
+La API monta tambien `/images` para desarrollo local y crea los directorios
+`images/bundles` e `images/books` si no existen.
+
+## Frontend
+
 ```bash
 cd frontend
 npm install
-npm run dev # http://localhost:3002
+npm run dev
 ```
-Available variables:
+
+Variable opcional:
+
 ```bash
 VITE_API_BASE_URL=http://127.0.0.1:5002
 ```
-See `frontend/README.md` for scripts (`build`, `preview`), light/dark themes and component structure.
 
-## Repository Architecture
-- `spider/`: ETL module.
-  - `core/`: `HumbleSpider` class and custom exceptions.
-  - `scrapers/`: fetches details for each bundle (tiers, books, tile_logo).
-  - `database/`: SQLAlchemy `Bundle` model, sessions and persistence helpers (`persist_bundles`, `remove_outdated_bundles`).
-  - `schemas/`: Pydantic models (`BundleRecord`).
-  - `utils/`: transformations (text normalization, absolute URLs, metrics).
-  - `config/`: settings based on Pydantic Settings (SQLite configuration).
+Scripts utiles:
+
+- `npm run dev`: Vite dev server en `http://localhost:3002`.
+- `npm run build`: type-check con `vue-tsc` y build Vite.
+- `npm run preview`: previsualiza el build.
+- `npm run lint`: ESLint.
+- `npm run lint:style`: Stylelint para Vue/CSS/SCSS.
+- `npm run test:run`: suite Vitest en modo CI.
+- `npm run test:coverage`: cobertura Vitest.
+
+Caracteristicas actuales:
+
+- Tema claro/oscuro con persistencia local.
+- Selector de idioma `es`/`en`.
+- Vista destacada y listado de bundles activos.
+- Layout desktop/mobile con `useResponsiveQueryEvent`.
+- Boton para ejecutar `/etl/run` desde la interfaz.
+- Pestana de utilidades con visor/exportador JSON de bundles y snapshots raw.
+
+## Arquitectura del repositorio
+
+- `spider/`: modulo ETL.
+  - `core/`: clase `HumbleSpider` y errores de dominio.
+  - `scrapers/`: scraper de detalle por bundle.
+  - `database/`: modelos SQLAlchemy, sesiones y persistencia.
+  - `schemas/`: modelos Pydantic de bundles y raw data.
+  - `utils/`: transformadores de texto, URLs, fechas y metricas.
+  - `config/`: settings basados en variables `DB_*`.
   - `cli/`: entrypoint `run_spider.py`.
-- `api/`: FastAPI v1.0 with sync/async dependencies and response schemas.
-- `frontend/`: SPA in Vue 3 + Vite (responsive components, composables, custom typography).
-- `docs/`: technical notes (`data_profile.md`, `frontend-style-stack.md`, `image-urls-pattern.md`).
-- `Makefile`: main development automations (local development, no Docker).
+- `api/`: aplicacion FastAPI, dependencias sync/async y schemas de respuesta.
+- `frontend/`: SPA Vue 3 + Vite con componentes, composables, i18n y tests.
+- `docs/`: notas tecnicas de perfilado de datos y stack visual heredado.
+- `Makefile`: automatizaciones locales sin Docker.
 
-## Database
-The project uses SQLite for local development. The database file (`humble_bundle.db` by default) is created automatically when you run `make db-init` or when the API starts.
+## Base de datos
 
-To reset the database:
+El proyecto usa SQLite para desarrollo local. Por defecto escribe en
+`humble_bundle.db`; puedes cambiarlo con `DB_DB_PATH`.
+
+Tablas principales:
+
+- `bundle`: metadatos normalizados, estado activo, fechas, tiers, libros,
+  imagenes, MSRP y HTML bruto.
+- `landing_page_raw_data`: snapshots del JSON `landingPage-json-data` con fecha,
+  URL fuente, hash y version opcional.
+
+Para recrear la base:
+
 ```bash
 make db-reset
+make db-init
 ```
 
-## Suggested Next Steps
-- Add unit/integration tests for spider, persistence and API.
-- Extend frontend coverage (component and composable tests).
-- Automate periodic ETL executions (cron, Celery or similar) and add basic authentication to the API.
-- Generate historical snapshots in `docs/` and version the resulting datasets.
-- If you change the model, recreate the database (`make db-reset`) before re-running the pipeline.
+## Verificacion
+
+```bash
+cd frontend
+npm run test:run
+npm run build
+```
+
+No hay suite automatizada de backend en el estado actual. Para validar el flujo
+completo manualmente, levanta la API, ejecuta `POST /etl/run` o `make etl` y
+revisa `/bundles` y `/landing-page-raw-data`.
+
+## Release 1.0.0
+
+Checklist de esta release:
+
+- README actualizado contra el estado real del proyecto.
+- API y frontend documentados con los endpoints y scripts actuales.
+- Tag git local `1.0.0` apuntando al commit de documentacion de release.
