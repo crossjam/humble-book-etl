@@ -141,6 +141,7 @@ allowed_origins = [
     'http://127.0.0.1:3003',
     'https://projects.dopeldev.com',
     'https://humble-book-etl-crossjam.exe.xyz:3002',
+    'https://hbetl.aegean-skate.ts.net',
 ]
 
 app.add_middleware(
