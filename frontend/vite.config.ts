@@ -4,7 +4,7 @@ import vue from "@vitejs/plugin-vue";
 import path from "node:path";
 
 export default defineConfig({
-	base: "/humblebundlespider/",
+	base: "/",
 	plugins: [vue()],
 	resolve: {
 		alias: {
