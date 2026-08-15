@@ -6,6 +6,13 @@
     
     <section class="intro">
       <div class="status-card">
+        <p class="credit">
+          {{ $t('app.credit.prefix') }}
+          <a href="https://github.com/dopelDev" target="_blank" rel="noopener noreferrer">@dopeldev</a>
+          {{ $t('app.credit.original') }}
+          <a href="https://github.com/dopelDev/humbleBundle" target="_blank" rel="noopener noreferrer">humbleBundle</a>.
+          {{ $t('app.credit.license') }}
+        </p>
         <p class="eyebrow">{{ $t('app.eyebrow') }}</p>
         <h1>{{ $t('app.title') }}</h1>
         <p class="project-description">{{ $t('app.description') }}</p>
@@ -175,6 +182,22 @@ const handleLogout = () => {
     display: flex;
     flex-direction: column;
     gap: 16px;
+
+    .credit {
+      margin: 0;
+      padding: 10px 12px;
+      border: 1px dashed var(--border);
+      border-radius: 10px;
+      background: var(--surface);
+      color: var(--muted);
+      font-size: 0.8rem;
+      line-height: 1.5;
+
+      a {
+        color: var(--primary);
+        font-weight: 600;
+      }
+    }
 
     .eyebrow {
       text-transform: uppercase;

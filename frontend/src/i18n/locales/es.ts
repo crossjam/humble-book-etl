@@ -17,6 +17,11 @@ export default {
     eyebrow: 'Humble Tracker',
     title: 'Book bundles in real time',
     description: 'Pipeline ETL + API v1.0 + frontend para obtener bundles públicos de Humble Bundle Books, normalizarlos y almacenarlos en SQLite. Construido con Python 3.13, FastAPI, Vue 3 y SQLite.',
+    credit: {
+      prefix: 'Crédito para',
+      original: 'Proyecto original:',
+      license: 'Este es un fork distribuido bajo la licencia MIT.',
+    },
     techStack: {
       title: 'Stack Tecnológico',
       backend: 'Backend: Python 3.13, FastAPI, SQLAlchemy, SQLite',
