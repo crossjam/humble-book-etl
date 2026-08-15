@@ -55,12 +55,12 @@ class UserResponse(BaseModel):
 class UserCreate(BaseModel):
     username: str = Field(..., min_length=3, max_length=64)
     email: EmailStr
-    password: str = Field(..., min_length=8, max_length=128, description='Contraseña en texto plano (el backend la hashea automáticamente)')
+    password: str = Field(..., min_length=1, max_length=128, description='Contraseña en texto plano (el backend la hashea automáticamente)')
 
 
 class LoginRequest(BaseModel):
     username: str
-    password: str = Field(..., min_length=8, max_length=128)
+    password: str = Field(..., min_length=1, max_length=128)
 
 
 class TokenResponse(BaseModel):
