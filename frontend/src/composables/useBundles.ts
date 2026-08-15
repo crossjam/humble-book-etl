@@ -18,7 +18,17 @@ export function useBundles() {
   const auth = useAuth();
 
   const activeBundles = computed(() =>
-    bundles.value.filter((bundle) => bundle.is_active),
+    bundles.value
+      .filter((bundle) => bundle.is_active)
+      .sort((a, b) => {
+        const endDateA = a.end_date_datetime
+          ? new Date(a.end_date_datetime).getTime()
+          : Number.POSITIVE_INFINITY;
+        const endDateB = b.end_date_datetime
+          ? new Date(b.end_date_datetime).getTime()
+          : Number.POSITIVE_INFINITY;
+        return endDateA - endDateB;
+      }),
   );
 
   const fetchData = async () => {
