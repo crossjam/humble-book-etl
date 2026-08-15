@@ -288,7 +288,7 @@ const handleLogout = () => {
             background: var(--bg);
             padding: 2px 6px;
             border-radius: 4px;
-            font-family: "Monofur Nerd Font", monospace;
+            font-family: Menlo, Monaco, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
             font-size: 0.8rem;
             color: var(--primary);
             border: 1px solid var(--border);
