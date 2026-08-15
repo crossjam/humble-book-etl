@@ -12,6 +12,8 @@ from api.schemas import (
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi.openapi.docs import get_redoc_html
+from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import OAuth2PasswordBearer
@@ -130,8 +132,18 @@ app = FastAPI(
     title='Humble Bundle ETL API',
     version='1.0.1',
     description='API v1.0.1 - Scraper original de Humble Bundle. Trigger ETL and query stored bundles.',
-    lifespan=lifespan
+    lifespan=lifespan,
+    redoc_url=None,
 )
+
+
+@app.get('/redoc', include_in_schema=False, response_class=HTMLResponse)
+async def redoc() -> HTMLResponse:
+    return get_redoc_html(
+        openapi_url='/api/openapi.json',
+        title=f'{app.title} - ReDoc',
+        redoc_js_url='https://cdn.jsdelivr.net/npm/redoc@latest/bundles/redoc.standalone.js',
+    )
 
 allowed_origins = [
     'http://localhost:3002',
