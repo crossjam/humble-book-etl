@@ -5,7 +5,6 @@
     <LanguageSwitcher />
     
     <section class="intro">
-      <ProfileCard />
       <div class="status-card">
         <p class="eyebrow">{{ $t('app.eyebrow') }}</p>
         <h1>{{ $t('app.title') }}</h1>
@@ -117,7 +116,6 @@ import { useRouter } from "vue-router";
 import DarkButton from "@components/floating-controls/components/DarkButton.vue";
 import LanguageSwitcher from "@components/floating-controls/components/LanguageSwitcher.vue";
 import LogoutButton from "@components/floating-controls/components/LogoutButton.vue";
-import ProfileCard from "@components/cards/ProfileCard.vue";
 import DesktopMain from "@components/main/DesktopMain.vue";
 import MobileMain from "@components/main/MobileMain.vue";
 import TestsSection from "@components/sections/TestsSection.vue";

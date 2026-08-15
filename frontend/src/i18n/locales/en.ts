@@ -51,11 +51,6 @@ export default {
       testsAndUtilities: 'Tests and Utilities',
     },
   },
-  profile: {
-    name: 'dopeldev',
-    tagline: 'Full Stack Developer',
-    description: 'Passionate developer creating innovative solutions. Specialized in modern web development with Vue, React, Python and FastAPI.',
-  },
   featured: {
     eyebrow: 'Featured',
     estimatedMsrp: 'Estimated MSRP:',
