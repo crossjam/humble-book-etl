@@ -12,7 +12,11 @@ from api.schemas import (
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException, status
-from fastapi.openapi.docs import get_redoc_html
+from fastapi.openapi.docs import (
+    get_redoc_html,
+    get_swagger_ui_html,
+    get_swagger_ui_oauth2_redirect_html,
+)
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -134,7 +138,24 @@ app = FastAPI(
     description='API v1.0.1 - Scraper original de Humble Bundle. Trigger ETL and query stored bundles.',
     lifespan=lifespan,
     redoc_url=None,
+    docs_url=None,
 )
+
+
+@app.get('/docs', include_in_schema=False, response_class=HTMLResponse)
+async def swagger_ui_html() -> HTMLResponse:
+    return get_swagger_ui_html(
+        openapi_url='/api/openapi.json',
+        title=f'{app.title} - Swagger UI',
+        oauth2_redirect_url='/api/docs/oauth2-redirect',
+        swagger_js_url='https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js',
+        swagger_css_url='https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css',
+    )
+
+
+@app.get('/docs/oauth2-redirect', include_in_schema=False, response_class=HTMLResponse)
+async def swagger_ui_redirect() -> HTMLResponse:
+    return get_swagger_ui_oauth2_redirect_html()
 
 
 @app.get('/redoc', include_in_schema=False, response_class=HTMLResponse)
