@@ -140,6 +140,7 @@ allowed_origins = [
     'http://localhost:3003',
     'http://127.0.0.1:3003',
     'https://projects.dopeldev.com',
+    'https://humble-book-etl-crossjam.exe.xyz:3002',
 ]
 
 app.add_middleware(
