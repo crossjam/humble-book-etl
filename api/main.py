@@ -307,6 +307,12 @@ async def list_bundles(
             Bundle.is_active.is_(True),
             Bundle.archived_at.is_(None),
         )
+    if offset > 0 and (snapshot_at is not None or before_id is not None or before_end_date is not None):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail='offset cannot be combined with snapshot or cursor pagination',
+        )
+
     if snapshot_at is not None:
         if snapshot_at.tzinfo is None or snapshot_at.utcoffset() != timedelta(0):
             raise HTTPException(

@@ -424,3 +424,49 @@ def test_api_archive_pagination_uses_keyset_cursor(engine):
 def test_snapshot_at_requires_timezone_aware_utc(engine):
     with pytest.raises(HTTPException, match="UTC"):
         asyncio.run(list_bundles(include_inactive=True, snapshot_at=datetime(2026, 9, 3, 12, 0), db=None))
+def test_archive_pagination_rejects_mixed_offset_and_cursor(engine):
+    snapshot = datetime(2026, 9, 3, 12, 0, tzinfo=timezone.utc)
+    with pytest.raises(HTTPException, match="offset"):
+        asyncio.run(list_bundles(
+            include_inactive=True,
+            offset=1,
+            snapshot_at=snapshot,
+            db=None,
+        ))
+
+
+def test_raw_html_endpoint_denies_unauthenticated_requests(engine):
+    with Session(engine) as session:
+        session.add(Bundle(
+            id="private-html",
+            machine_name="private-html",
+            is_active=True,
+            end_date_datetime=datetime(2026, 9, 10, 12, 0),
+            raw_html="<html>private</html>",
+        ))
+        session.commit()
+
+    async def override_async_db():
+        async_engine = create_async_engine(f"sqlite+aiosqlite:///{engine.url.database}")
+        try:
+            async with async_sessionmaker(
+                async_engine, class_=AsyncSession, expire_on_commit=False
+            )() as session:
+                yield session
+        finally:
+            await async_engine.dispose()
+
+    app.dependency_overrides[get_async_db] = override_async_db
+
+    async def exercise():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            return await client.get("/bundles/private-html/raw-html")
+
+    try:
+        response = asyncio.run(exercise())
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 401
+    assert "private" not in response.text
