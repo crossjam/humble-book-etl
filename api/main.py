@@ -10,6 +10,7 @@ from api.schemas import (
     UserResponse,
 )
 from contextlib import asynccontextmanager
+from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Query, status
 from fastapi.openapi.docs import (
@@ -290,7 +291,9 @@ async def get_featured_bundle(db: AsyncSession = Depends(get_async_db)):
 
 @app.get('/bundles', response_model=list[BundleResponse], tags=['bundles'])
 async def list_bundles(
-    include_inactive: bool = Query(False, description='Include archived/inactive bundles'),
+    include_inactive: Annotated[bool, Query(description='Include archived/inactive bundles')] = False,
+    limit: Annotated[int, Query(ge=1, le=1000, description='Maximum bundles to return')] = 100,
+    offset: Annotated[int, Query(ge=0, description='Number of bundles to skip')] = 0,
     db: AsyncSession = Depends(get_async_db),
 ):
     statement = select(Bundle)
@@ -299,7 +302,12 @@ async def list_bundles(
             Bundle.is_active.is_(True),
             Bundle.archived_at.is_(None),
         )
-    result = await db.execute(statement.order_by(Bundle.end_date_datetime.desc()))
+    result = await db.execute(
+        statement.order_by(
+            nulls_last(Bundle.end_date_datetime.desc()),
+            Bundle.id.desc(),
+        ).offset(offset).limit(limit)
+    )
     bundles = result.scalars().all()
     return bundles
 

@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from typing import Iterable
 
 import logging
-from sqlalchemy import create_engine, inspect, or_, text
+from sqlalchemy import create_engine, inspect, or_, text, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -80,8 +80,7 @@ def ensure_columns(engine) -> None:
         statements.append('ALTER TABLE bundle ADD COLUMN msrp_total REAL')
     if 'raw_html' not in columns:
         statements.append('ALTER TABLE bundle ADD COLUMN raw_html TEXT')
-    if 'archived_at' not in columns:
-        statements.append('ALTER TABLE bundle ADD COLUMN archived_at TIMESTAMP')
+    archive_column_needed = 'archived_at' not in columns
     
     for stmt in statements:
         try:
@@ -91,21 +90,33 @@ def ensure_columns(engine) -> None:
         except Exception as exc:
             logger.warning('Error agregando columna %s: %s', stmt, exc)
 
-    if 'archived_at' in columns or any('archived_at' in stmt for stmt in statements):
+    if archive_column_needed:
+        try:
+            with engine.begin() as connection:
+                connection.execute(text('ALTER TABLE bundle ADD COLUMN archived_at TIMESTAMP'))
+                logger.info('Columna agregada: ALTER TABLE bundle ADD COLUMN archived_at TIMESTAMP')
+        except Exception as exc:
+            raise RuntimeError('Could not add required bundle.archived_at column') from exc
+
+    if 'archived_at' in columns or archive_column_needed:
         try:
             with engine.begin() as connection:
                 connection.execute(text(
                     'CREATE INDEX IF NOT EXISTS ix_bundle_archived_at ON bundle (archived_at)'
                 ))
-                result = connection.execute(text(
-                    'UPDATE bundle SET is_active = 0 '
-                    'WHERE archived_at IS NOT NULL '
-                    'AND (is_active IS NULL OR is_active != 0)'
-                ))
+                result = connection.execute(_archive_state_update())
                 if result.rowcount:
                     logger.info('Normalized %s archived bundles as inactive', result.rowcount)
         except Exception as exc:
-            logger.warning('Error creando índice ix_bundle_archived_at: %s', exc)
+            raise RuntimeError('Could not initialize bundle archive state') from exc
+
+
+def _archive_state_update():
+    """Build a cross-dialect update enforcing archived-implies-inactive."""
+    return update(Bundle).where(
+        Bundle.archived_at.is_not(None),
+        Bundle.is_active.is_not(False),
+    ).values(is_active=False)
 
 
 def _utc_naive(value: datetime) -> datetime:

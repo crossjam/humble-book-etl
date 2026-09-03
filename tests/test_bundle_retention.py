@@ -6,12 +6,14 @@ from tempfile import TemporaryDirectory
 import httpx
 import pytest
 from sqlalchemy import create_engine, inspect
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import Session
 
-from api.main import app, get_async_db, get_bundle_by_machine_name, get_featured_bundle, list_bundles
+from api.main import app, get_async_db, get_featured_bundle, list_bundles
 from spider.database.models import Base, Bundle
 from spider.database.persistence import (
+    _archive_state_update,
     ensure_columns,
     persist_bundles,
     remove_outdated_bundles,
@@ -63,7 +65,7 @@ def test_expired_bundle_is_archived_instead_of_deleted(engine):
         assert retained.archived_at == now
 
 
-def test_archiving_is_idempotent_and_preserves_first_timestamp(engine):
+def test_archiving_is_idempotent_and_preserves_timestamp_for_current_period(engine):
     now = datetime(2026, 9, 3, 12, 0)
     first_archived_at = now - timedelta(minutes=30)
     with Session(engine) as session:
@@ -81,6 +83,39 @@ def test_archiving_is_idempotent_and_preserves_first_timestamp(engine):
 
         retained = session.get(Bundle, "bundle-1")
         assert retained.archived_at == first_archived_at
+
+
+def test_archive_state_normalization_is_postgresql_compatible():
+    sql = str(_archive_state_update().compile(dialect=postgresql.dialect()))
+    assert "IS NOT false" in sql
+    assert "!= 0" not in sql
+
+
+def test_api_list_supports_bounded_offset_pagination(engine):
+    now = datetime(2026, 9, 3, 12, 0)
+    with Session(engine) as session:
+        session.add_all([
+            Bundle(
+                id=f"archived-{index}",
+                machine_name=f"archived-{index}",
+                is_active=False,
+                archived_at=now - timedelta(days=index + 1),
+                end_date_datetime=now - timedelta(days=index + 2),
+            )
+            for index in range(3)
+        ])
+        session.commit()
+
+    async def exercise():
+        async_engine = create_async_engine(f"sqlite+aiosqlite:///{engine.url.database}")
+        async with async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)() as session:
+            page = await list_bundles(include_inactive=True, limit=1, offset=1, db=session)
+        await async_engine.dispose()
+        return page
+
+    page = asyncio.run(exercise())
+    assert len(page) == 1
+    assert page[0].id == "archived-1"
 
 
 def test_api_list_defaults_to_active_bundles(engine):
