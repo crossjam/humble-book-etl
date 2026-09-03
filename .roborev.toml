@@ -81,7 +81,7 @@ refine_agent_maximum = ''
 # Agent override for max refine in this repo.
 refine_agent_max = ''
 # Model override for standard review in this repo.
-review_model = ''
+review_model = 'exe-dev-openai/gpt-5.6-terra@llm'
 # Model override for fast review in this repo.
 review_model_fast = ''
 # Model override for low review in this repo.
@@ -93,7 +93,7 @@ review_model_medium = ''
 # Model override for thorough review in this repo.
 review_model_thorough = ''
 # Model override for high review in this repo.
-review_model_high = ''
+review_model_high = 'exe-dev-openai/gpt-5.6-terra@llm'
 # Model override for xhigh review in this repo.
 review_model_xhigh = ''
 # Model override for maximum review in this repo.
