@@ -306,7 +306,7 @@ async def list_bundles(
 
 @app.get('/bundles/{bundle_id}', response_model=BundleResponse, tags=['bundles'])
 async def get_bundle(bundle_id: str, db: AsyncSession = Depends(get_async_db)):
-    """Gets a bundle by its UUID."""
+    """Gets a bundle by UUID, including retained inactive bundles."""
     result = await db.execute(
         select(Bundle).filter(Bundle.id == bundle_id)
     )
@@ -319,7 +319,7 @@ async def get_bundle(bundle_id: str, db: AsyncSession = Depends(get_async_db)):
 
 @app.get('/bundles/by-machine-name/{machine_name}', response_model=BundleResponse, tags=['bundles'])
 async def get_bundle_by_machine_name(machine_name: str, db: AsyncSession = Depends(get_async_db)):
-    """Gets a bundle by its machine_name (backward compatibility)."""
+    """Gets a bundle by machine_name, including retained inactive bundles."""
     result = await db.execute(
         select(Bundle).filter(Bundle.machine_name == machine_name)
     )

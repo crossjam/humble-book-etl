@@ -140,3 +140,82 @@ def test_api_featured_excludes_archived_bundles(engine):
         return featured
 
     assert asyncio.run(exercise()).id == "active"
+
+
+def test_reappearing_bundle_reactivates_same_row(engine):
+    now = datetime(2026, 9, 3, 12, 0)
+    with Session(engine) as session:
+        session.add(Bundle(
+            id="bundle-1",
+            machine_name="bundle-one",
+            end_date_datetime=now - timedelta(hours=1),
+            verification_date=now - timedelta(hours=2),
+            is_active=False,
+            archived_at=now - timedelta(days=1),
+        ))
+        session.commit()
+
+        record = BundleRecord(
+            machine_name="bundle-one",
+            start_date_datetime=now - timedelta(days=1),
+            end_date_datetime=now + timedelta(days=6),
+            verification_date=now,
+            is_active=True,
+        )
+        persist_bundles([record], session, now=now)
+
+        reappeared = session.query(Bundle).filter_by(machine_name="bundle-one").one()
+        assert reappeared.id == "bundle-1"
+        assert reappeared.is_active is True
+        assert reappeared.archived_at is None
+        assert reappeared.end_date_datetime == now + timedelta(days=6)
+
+
+def test_expired_incoming_record_cannot_reactivate_archived_bundle(engine):
+    now = datetime(2026, 9, 3, 12, 0)
+    archived_at = now - timedelta(days=1)
+    with Session(engine) as session:
+        session.add(Bundle(
+            id="bundle-1",
+            machine_name="bundle-one",
+            end_date_datetime=now - timedelta(hours=1),
+            verification_date=archived_at,
+            is_active=False,
+            archived_at=archived_at,
+        ))
+        session.commit()
+
+        stale_record = BundleRecord(
+            machine_name="bundle-one",
+            start_date_datetime=now - timedelta(days=2),
+            end_date_datetime=now - timedelta(hours=1),
+            verification_date=now,
+            is_active=True,
+        )
+        persist_bundles([stale_record], session, now=now)
+
+        retained = session.query(Bundle).filter_by(machine_name="bundle-one").one()
+        assert retained.is_active is False
+        assert retained.archived_at == archived_at
+
+
+def test_existing_archived_active_state_is_normalized(engine):
+    with engine.begin() as connection:
+        connection.exec_driver_sql("DROP TABLE bundle")
+        connection.exec_driver_sql(
+            "CREATE TABLE bundle ("
+            "id VARCHAR PRIMARY KEY, machine_name VARCHAR UNIQUE NOT NULL, "
+            "is_active BOOLEAN, archived_at TIMESTAMP)"
+        )
+        connection.exec_driver_sql(
+            "INSERT INTO bundle (id, machine_name, is_active, archived_at) "
+            "VALUES ('bundle-1', 'bundle-one', 1, '2026-09-02 12:00:00')"
+        )
+
+    ensure_columns(engine)
+
+    with engine.connect() as connection:
+        row = connection.exec_driver_sql(
+            "SELECT is_active FROM bundle WHERE id = 'bundle-1'"
+        ).one()
+    assert row[0] == 0

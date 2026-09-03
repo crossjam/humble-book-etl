@@ -97,6 +97,13 @@ def ensure_columns(engine) -> None:
                 connection.execute(text(
                     'CREATE INDEX IF NOT EXISTS ix_bundle_archived_at ON bundle (archived_at)'
                 ))
+                result = connection.execute(text(
+                    'UPDATE bundle SET is_active = 0 '
+                    'WHERE archived_at IS NOT NULL '
+                    'AND (is_active IS NULL OR is_active != 0)'
+                ))
+                if result.rowcount:
+                    logger.info('Normalized %s archived bundles as inactive', result.rowcount)
         except Exception as exc:
             logger.warning('Error creando índice ix_bundle_archived_at: %s', exc)
 
@@ -110,6 +117,18 @@ def _utc_naive(value: datetime) -> datetime:
 
 def _is_expired(end_date: datetime | None, now: datetime) -> bool:
     return end_date is not None and _utc_naive(end_date) < _utc_naive(now)
+
+
+def _is_current_payload(payload: dict, now: datetime) -> bool:
+    start_date = payload.get('start_date_datetime')
+    end_date = payload.get('end_date_datetime')
+    return (
+        payload.get('is_active') is True
+        and start_date is not None
+        and end_date is not None
+        and _utc_naive(start_date) <= _utc_naive(now)
+        and not _is_expired(end_date, now)
+    )
 
 
 def persist_bundles(
@@ -130,9 +149,9 @@ def persist_bundles(
     Raises:
         RuntimeError: Si ocurre un error al guardar los bundles en la BD.
     """
+    current_time = now or datetime.utcnow()
     for record in records:
         payload = record.to_orm_payload()
-        current_time = now or datetime.utcnow()
         try:
             # Buscar si ya existe un bundle con el mismo machine_name
             existing = session.query(Bundle).filter(Bundle.machine_name == payload['machine_name']).first()
@@ -141,20 +160,25 @@ def persist_bundles(
                 for key, value in payload.items():
                     if key != 'id':  # No actualizar el ID
                         setattr(existing, key, value)
-                if payload.get('is_active') is True:
+                if _is_current_payload(payload, current_time):
                     # A reappearing bundle keeps its identity and becomes current again.
+                    existing.is_active = True
                     existing.archived_at = None
                 elif _is_expired(payload.get('end_date_datetime'), current_time):
                     existing.is_active = False
                     if existing.archived_at is None:
                         existing.archived_at = current_time
+                elif payload.get('is_active') is True:
+                    # Never restore an active state without a valid, future end date.
+                    existing.is_active = False
             else:
-                if (
-                    payload.get('is_active') is not True
-                    and _is_expired(payload.get('end_date_datetime'), current_time)
-                ):
+                if _is_current_payload(payload, current_time):
+                    payload['archived_at'] = None
+                elif _is_expired(payload.get('end_date_datetime'), current_time):
                     payload['is_active'] = False
                     payload['archived_at'] = current_time
+                elif payload.get('is_active') is True:
+                    payload['is_active'] = False
                 # Insertar un bundle nuevo
                 bundle = Bundle(**payload)
                 session.add(bundle)

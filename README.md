@@ -187,8 +187,8 @@ Public endpoints:
 - `GET /health`: service status.
 - `GET /bundles`: active bundles ordered by closing date.
 - `GET /bundles?include_inactive=true`: includes retained inactive bundles.
-- `GET /bundles/{bundle_id}`: bundle by UUID.
-- `GET /bundles/by-machine-name/{machine_name}`: bundle by `machine_name`.
+- `GET /bundles/{bundle_id}`: bundle by UUID, including retained inactive bundles when the UUID is known.
+- `GET /bundles/by-machine-name/{machine_name}`: bundle by `machine_name`, including retained inactive bundles.
 - `GET /bundles/featured`: featured bundle by MSRP and sales.
 - `GET /landing-page-raw-data`: raw snapshots.
 - `GET /landing-page-raw-data/latest`: latest raw snapshot.
