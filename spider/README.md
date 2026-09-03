@@ -248,7 +248,7 @@ La tabla `bundle` almacena los metadatos enriquecidos de cada bundle, y `landing
 - `database/persistence.py`: operaciones de persistencia y mantenimiento.
   - `persist_bundles`: SELECT/UPDATE en SQLite (busca por machine_name, actualiza o inserta).
   - `persist_landing_page_raw_data`: inserta el JSON bruto de landingPage con metadata.
-  - `remove_outdated_bundles`: archiva bundles con `end_date_datetime` en el pasado sin eliminar sus metadatos; preserva la primera fecha de archivado.
+  - `remove_outdated_bundles`: archiva bundles con `end_date_datetime` en el pasado sin eliminar sus metadatos; `archived_at` marca el período archivado actual y se reinicia si el bundle reaparece válidamente.
   - `recreate_database`: elimina el archivo SQLite si existe y recrea tablas y columnas.
   - `ensure_columns` y `ensure_landing_page_raw_data_table`: migraciones rápidas en SQL crudo para añadir columnas/tablas si faltan (usando tipos SQLite: TEXT, REAL, VARCHAR).
 

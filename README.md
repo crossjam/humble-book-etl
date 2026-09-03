@@ -186,13 +186,15 @@ Public endpoints:
 
 - `GET /health`: service status.
 - `GET /bundles`: active bundles ordered by closing date.
-- `GET /bundles?include_inactive=true`: includes retained inactive bundles.
+- `GET /bundles?include_inactive=true`: includes retained inactive bundles, including expired/archived and other non-current records.
 - `GET /bundles/{bundle_id}`: bundle by UUID, including retained inactive bundles when the UUID is known.
 - `GET /bundles/by-machine-name/{machine_name}`: bundle by `machine_name`, including retained inactive bundles.
 - `GET /bundles/featured`: featured bundle by MSRP and sales.
 - `GET /landing-page-raw-data`: raw snapshots.
 - `GET /landing-page-raw-data/latest`: latest raw snapshot.
 - `GET /landing-page-raw-data/{raw_data_id}`: raw snapshot by UUID.
+
+The detail endpoints intentionally remain public for known identifiers, including retained `raw_html`; collection endpoints hide non-current rows unless explicitly requested.
 
 Authentication endpoints:
 
@@ -202,6 +204,12 @@ Authentication endpoints:
 Protected endpoint:
 
 - `POST /etl/run`: runs the ETL and requires `Authorization: Bearer <token>`.
+
+## Database migration
+
+At startup, the API and ETL add the nullable `archived_at` column and its index if needed. Startup also normalizes any row with `archived_at` set to `is_active=false`; this is a one-way safety correction. Back up the SQLite file before deployment so rollback can restore the pre-migration database.
+
+The lifecycle states are intentionally small: current (`is_active=true`, `archived_at=NULL`), archived/expired (`is_active=false`, `archived_at` set), and non-current/unarchived (`is_active=false`, `archived_at=NULL`, such as scheduled or source-inactive data). The opt-in collection returns both non-current categories; the UI presents them together as inactive.
 
 ## Tests
 

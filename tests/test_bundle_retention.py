@@ -3,12 +3,13 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+import httpx
 import pytest
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import Session
 
-from api.main import get_featured_bundle, list_bundles
+from api.main import app, get_async_db, get_bundle_by_machine_name, get_featured_bundle, list_bundles
 from spider.database.models import Base, Bundle
 from spider.database.persistence import (
     ensure_columns,
@@ -140,6 +141,43 @@ def test_api_featured_excludes_archived_bundles(engine):
         return featured
 
     assert asyncio.run(exercise()).id == "active"
+
+
+def test_machine_name_route_returns_archived_bundle_over_http(engine):
+    with Session(engine) as session:
+        session.add(Bundle(
+            id="archived",
+            machine_name="archived-name",
+            is_active=False,
+            archived_at=datetime(2026, 9, 2, 12, 0),
+            end_date_datetime=datetime(2026, 9, 1, 12, 0),
+        ))
+        session.commit()
+
+    async def override_async_db():
+        async_engine = create_async_engine(f"sqlite+aiosqlite:///{engine.url.database}")
+        try:
+            async with async_sessionmaker(
+                async_engine, class_=AsyncSession, expire_on_commit=False
+            )() as session:
+                yield session
+        finally:
+            await async_engine.dispose()
+
+    app.dependency_overrides[get_async_db] = override_async_db
+
+    async def exercise():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            return await client.get("/bundles/by-machine-name/archived-name")
+
+    try:
+        response = asyncio.run(exercise())
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json()["id"] == "archived"
 
 
 def test_reappearing_bundle_reactivates_same_row(engine):

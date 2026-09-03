@@ -304,11 +304,11 @@ async def list_bundles(
     return bundles
 
 
-@app.get('/bundles/{bundle_id}', response_model=BundleResponse, tags=['bundles'])
-async def get_bundle(bundle_id: str, db: AsyncSession = Depends(get_async_db)):
-    """Gets a bundle by UUID, including retained inactive bundles."""
+@app.get('/bundles/by-machine-name/{machine_name}', response_model=BundleResponse, tags=['bundles'])
+async def get_bundle_by_machine_name(machine_name: str, db: AsyncSession = Depends(get_async_db)):
+    """Gets a bundle by machine_name, including retained inactive bundles."""
     result = await db.execute(
-        select(Bundle).filter(Bundle.id == bundle_id)
+        select(Bundle).filter(Bundle.machine_name == machine_name)
     )
     bundle = result.scalar_one_or_none()
     if not bundle:
@@ -317,11 +317,11 @@ async def get_bundle(bundle_id: str, db: AsyncSession = Depends(get_async_db)):
     return bundle
 
 
-@app.get('/bundles/by-machine-name/{machine_name}', response_model=BundleResponse, tags=['bundles'])
-async def get_bundle_by_machine_name(machine_name: str, db: AsyncSession = Depends(get_async_db)):
-    """Gets a bundle by machine_name, including retained inactive bundles."""
+@app.get('/bundles/{bundle_id}', response_model=BundleResponse, tags=['bundles'])
+async def get_bundle(bundle_id: str, db: AsyncSession = Depends(get_async_db)):
+    """Gets a bundle by UUID, including retained inactive bundles."""
     result = await db.execute(
-        select(Bundle).filter(Bundle.machine_name == machine_name)
+        select(Bundle).filter(Bundle.id == bundle_id)
     )
     bundle = result.scalar_one_or_none()
     if not bundle:
