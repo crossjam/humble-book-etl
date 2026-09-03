@@ -19,7 +19,7 @@
       <BundleFilters
         v-model="statusFilter"
         :loading="loading"
-        @refresh="loadData"
+        @refresh="refresh"
       />
 
       <div class="bundles-list">
@@ -45,7 +45,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed } from 'vue';
 import { useBundles } from '@/composables/useBundles';
 import type { Bundle } from '@/types/bundle';
 import { viewJson, downloadJson } from '@/utils/jsonHandler';
@@ -116,13 +116,6 @@ function downloadBundleJson(bundle: Bundle) {
   downloadJson(bundle, `bundle-${bundle.machine_name || bundle.id}.json`);
 }
 
-function loadData() {
-  refresh();
-}
-
-onMounted(() => {
-  loadData();
-});
 </script>
 
 <style scoped lang="scss">

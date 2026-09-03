@@ -1,6 +1,6 @@
 from pathlib import Path
 import os
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from api.security import create_access_token, decode_access_token, verify_password
 from api.schemas import (
     BundleResponse,
@@ -24,7 +24,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import OAuth2PasswordBearer
-from sqlalchemy import nulls_last, select
+from sqlalchemy import and_, nulls_last, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -297,6 +297,8 @@ async def list_bundles(
     limit: Annotated[int | None, Query(ge=1, le=1000, description='Maximum bundles to return')] = None,
     offset: Annotated[int, Query(ge=0, description='Number of bundles to skip')] = 0,
     snapshot_at: Annotated[datetime | None, Query(description='Fixed UTC snapshot boundary')] = None,
+    before_end_date: Annotated[datetime | None, Query(description='UTC end date cursor')] = None,
+    before_id: Annotated[str | None, Query(description='Bundle ID cursor')] = None,
     db: AsyncSession = Depends(get_async_db),
 ):
     statement = select(Bundle)
@@ -306,7 +308,42 @@ async def list_bundles(
             Bundle.archived_at.is_(None),
         )
     if snapshot_at is not None:
-        statement = statement.where(Bundle.verification_date <= snapshot_at)
+        if snapshot_at.tzinfo is None or snapshot_at.utcoffset() != timedelta(0):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail='snapshot_at must be an offset-aware UTC timestamp',
+            )
+        snapshot_db = snapshot_at.astimezone(timezone.utc).replace(tzinfo=None)
+        statement = statement.where(Bundle.verification_date <= snapshot_db)
+
+    if before_end_date is not None and before_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail='before_end_date requires before_id',
+        )
+    if before_id is not None and snapshot_at is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail='pagination cursors require snapshot_at',
+        )
+    if before_end_date is not None:
+        if before_end_date.tzinfo is None or before_end_date.utcoffset() != timedelta(0):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail='before_end_date must be an offset-aware UTC timestamp',
+            )
+        cursor_end_date = before_end_date.astimezone(timezone.utc).replace(tzinfo=None)
+        statement = statement.where(or_(
+            Bundle.end_date_datetime < cursor_end_date,
+            and_(Bundle.end_date_datetime == cursor_end_date, Bundle.id < before_id),
+            Bundle.end_date_datetime.is_(None),
+        ))
+    elif before_id is not None:
+        statement = statement.where(
+            Bundle.end_date_datetime.is_(None),
+            Bundle.id < before_id,
+        )
+
     page_size = limit if limit is not None else (100 if include_inactive else None)
     ordered_statement = statement.order_by(
         nulls_last(Bundle.end_date_datetime.desc()),
@@ -348,6 +385,7 @@ async def get_bundle_raw_html(
     if not bundle:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail='Bundle not found')
+    logger.info('Raw HTML access bundle=%s user=%s', bundle_id, current_user.id)
     return bundle
 
 

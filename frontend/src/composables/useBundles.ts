@@ -35,7 +35,7 @@ export function useBundles(options: UseBundlesOptions = {}) {
       }),
   );
 
-  const fetchBundles = async () => {
+  const fetchBundles = async (): Promise<Bundle[]> => {
     if (!options.includeInactive) {
       return get<Bundle[]>("/bundles");
     }
@@ -44,10 +44,14 @@ export function useBundles(options: UseBundlesOptions = {}) {
     const snapshotAt = new Date().toISOString();
     const result: Bundle[] = [];
     const seenIds = new Set<string>();
-    let offset = 0;
+    let beforeEndDate: string | null = null;
+    let beforeId: string | null = null;
     while (true) {
-      const page = await get<Bundle[]>(
-        `/bundles?include_inactive=true&limit=${pageSize}&offset=${offset}&snapshot_at=${encodeURIComponent(snapshotAt)}`,
+      const cursor: string = beforeId
+        ? `&before_id=${encodeURIComponent(beforeId)}${beforeEndDate ? `&before_end_date=${encodeURIComponent(beforeEndDate)}` : ""}`
+        : "";
+      const page: Bundle[] = await get<Bundle[]>(
+        `/bundles?include_inactive=true&limit=${pageSize}&snapshot_at=${encodeURIComponent(snapshotAt)}${cursor}`,
       );
       for (const bundle of page) {
         if (!seenIds.has(bundle.id)) {
@@ -58,7 +62,17 @@ export function useBundles(options: UseBundlesOptions = {}) {
       if (page.length < pageSize) {
         return result;
       }
-      offset += page.length;
+      const last: Bundle = page[page.length - 1];
+      beforeId = last.id;
+      const endDate = last.end_date_datetime;
+      const normalizedEndDate = endDate && /(?:Z|[+-]\\d{2}:\\d{2})$/.test(endDate)
+        ? endDate
+        : endDate
+          ? `${endDate}Z`
+          : null;
+      beforeEndDate = normalizedEndDate
+        ? new Date(normalizedEndDate).toISOString()
+        : null;
     }
   };
 

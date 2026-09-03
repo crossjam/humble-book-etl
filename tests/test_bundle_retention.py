@@ -1,10 +1,12 @@
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 
 import httpx
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -97,24 +99,25 @@ def test_archive_state_normalization_is_postgresql_compatible():
 
 
 def test_api_pagination_can_use_a_fixed_snapshot(engine):
-    snapshot = datetime(2026, 9, 3, 12, 0)
+    snapshot = datetime(2026, 9, 3, 12, 0, tzinfo=timezone.utc)
+    snapshot_db = snapshot.replace(tzinfo=None)
     with Session(engine) as session:
         session.add_all([
             Bundle(
                 id="before-snapshot",
                 machine_name="before-snapshot",
                 is_active=False,
-                archived_at=snapshot - timedelta(days=1),
-                end_date_datetime=snapshot - timedelta(days=2),
-                verification_date=snapshot - timedelta(minutes=1),
+                archived_at=snapshot_db - timedelta(days=1),
+                end_date_datetime=snapshot_db - timedelta(days=2),
+                verification_date=snapshot_db - timedelta(minutes=1),
             ),
             Bundle(
                 id="after-snapshot",
                 machine_name="after-snapshot",
                 is_active=False,
-                archived_at=snapshot,
-                end_date_datetime=snapshot - timedelta(days=1),
-                verification_date=snapshot + timedelta(minutes=1),
+                archived_at=snapshot_db,
+                end_date_datetime=snapshot_db - timedelta(days=1),
+                verification_date=snapshot_db + timedelta(minutes=1),
             ),
         ])
         session.commit()
@@ -281,7 +284,7 @@ def test_raw_html_requires_authenticated_replacement_endpoint(engine):
             await async_engine.dispose()
 
     app.dependency_overrides[get_async_db] = override_async_db
-    app.dependency_overrides[get_current_user] = lambda: object()
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id="operator")
 
     async def exercise():
         transport = httpx.ASGITransport(app=app)
@@ -374,3 +377,50 @@ def test_existing_archived_active_state_is_normalized(engine):
             "SELECT is_active FROM bundle WHERE id = 'bundle-1'"
         ).one()
     assert row[0] == 0
+
+
+def test_api_archive_pagination_uses_keyset_cursor(engine):
+    snapshot = datetime(2026, 9, 3, 12, 0, tzinfo=timezone.utc)
+    now = snapshot.replace(tzinfo=None)
+    with Session(engine) as session:
+        session.add_all([
+            Bundle(
+                id=f"archived-{index}",
+                machine_name=f"archived-{index}",
+                is_active=False,
+                archived_at=now - timedelta(days=1),
+                end_date_datetime=now - timedelta(days=index + 1),
+                verification_date=now - timedelta(minutes=1),
+            )
+            for index in range(3)
+        ])
+        session.commit()
+
+    async def exercise():
+        async_engine = create_async_engine(f"sqlite+aiosqlite:///{engine.url.database}")
+        async with async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)() as session:
+            first = await list_bundles(
+                include_inactive=True,
+                limit=2,
+                snapshot_at=snapshot,
+                db=session,
+            )
+            second = await list_bundles(
+                include_inactive=True,
+                limit=2,
+                snapshot_at=snapshot,
+                before_end_date=first[-1].end_date_datetime.replace(tzinfo=timezone.utc),
+                before_id=first[-1].id,
+                db=session,
+            )
+        await async_engine.dispose()
+        return first, second
+
+    first, second = asyncio.run(exercise())
+    assert [bundle.id for bundle in first] == ["archived-0", "archived-1"]
+    assert [bundle.id for bundle in second] == ["archived-2"]
+
+
+def test_snapshot_at_requires_timezone_aware_utc(engine):
+    with pytest.raises(HTTPException, match="UTC"):
+        asyncio.run(list_bundles(include_inactive=True, snapshot_at=datetime(2026, 9, 3, 12, 0), db=None))
