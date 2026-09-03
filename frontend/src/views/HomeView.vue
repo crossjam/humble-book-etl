@@ -93,6 +93,13 @@
         </button>
         <button
           class="tab-button"
+          :class="{ active: activeTab === 'inactive' }"
+          @click="activeTab = 'inactive'"
+        >
+          {{ $t('app.tabs.inactiveBundles') }}
+        </button>
+        <button
+          class="tab-button"
           :class="{ active: activeTab === 'tests' }"
           @click="activeTab = 'tests'"
         >
@@ -106,6 +113,10 @@
           :bundles="activeBundles"
           :featured="featured"
         />
+      </div>
+
+      <div v-show="activeTab === 'inactive'" class="tab-content">
+        <InactiveBundlesSection />
       </div>
 
       <div v-show="activeTab === 'tests'" class="tab-content">
@@ -127,6 +138,7 @@ import DesktopMain from "@components/main/DesktopMain.vue";
 import MobileMain from "@components/main/MobileMain.vue";
 import TestsSection from "@components/sections/TestsSection.vue";
 import UtilitiesSection from "@components/sections/UtilitiesSection.vue";
+import InactiveBundlesSection from "@components/sections/InactiveBundlesSection.vue";
 
 import { useResponsiveQueryEvent } from "@composables/useResponsiveQueryEvent";
 import { useBundles } from "@composables/useBundles";
@@ -140,7 +152,7 @@ const { isMobile } = useResponsiveQueryEvent();
 const { bundles, featured, activeBundles, loading, error, lastUpdate, etlResult, runETL } =
   useBundles();
 
-const activeTab = ref<"bundles" | "tests">("bundles");
+const activeTab = ref<"bundles" | "tests" | "inactive">("bundles");
 
 const formatDate = (date: Date) => {
   const dateLocale = locale.value === "es" ? "es-ES" : "en-US";
