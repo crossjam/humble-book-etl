@@ -196,6 +196,7 @@ La tabla `bundle` almacena los metadatos enriquecidos de cada bundle, y `landing
 - `bundle.start_date_datetime` (INDEX)
 - `bundle.end_date_datetime` (INDEX)
 - `bundle.is_active` (INDEX)
+- `bundle.verification_date` (INDEX)
 - `bundle.archived_at` (INDEX)
 - `landing_page_raw_data.scraped_date` (INDEX)
 - `landing_page_raw_data.json_hash` (INDEX)

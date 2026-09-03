@@ -388,7 +388,10 @@ def test_api_archive_pagination_uses_keyset_cursor(engine):
                 machine_name=f"archived-{index}",
                 is_active=False,
                 archived_at=now - timedelta(days=1),
-                end_date_datetime=now - timedelta(days=index + 1),
+                end_date_datetime=(
+                    now - timedelta(days=1) + timedelta(microseconds=2 - index)
+                    if index < 2 else None
+                ),
                 verification_date=now - timedelta(minutes=1),
             )
             for index in range(3)

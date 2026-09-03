@@ -41,6 +41,7 @@ export function useBundles(options: UseBundlesOptions = {}) {
     }
 
     const pageSize = 100;
+    const maxBundles = 10000;
     let snapshotAt: string | null = null;
     const result: Bundle[] = [];
     const seenIds = new Set<string>();
@@ -68,6 +69,9 @@ export function useBundles(options: UseBundlesOptions = {}) {
           seenIds.add(bundle.id);
           result.push(bundle);
         }
+      }
+      if (result.length > maxBundles) {
+        throw new Error("El historial supera el máximo de 10.000 bundles para esta vista.");
       }
       if (page.length < pageSize) {
         return result;

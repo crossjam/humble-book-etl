@@ -104,6 +104,12 @@ def ensure_columns(engine) -> None:
                 connection.execute(text(
                     'CREATE INDEX IF NOT EXISTS ix_bundle_archived_at ON bundle (archived_at)'
                 ))
+                if 'verification_date' in {
+                    column['name'] for column in inspect(engine).get_columns('bundle')
+                }:
+                    connection.execute(text(
+                        'CREATE INDEX IF NOT EXISTS ix_bundle_verification_date ON bundle (verification_date)'
+                    ))
                 result = connection.execute(_archive_state_update())
                 if result.rowcount:
                     logger.info('Normalized %s archived bundles as inactive', result.rowcount)
