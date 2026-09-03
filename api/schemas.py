@@ -24,7 +24,6 @@ class BundleResponse(BaseModel):
     featured_image: Optional[str] = None
     tile_logo: Optional[str] = None
     msrp_total: Optional[float] = None
-    raw_html: Optional[str] = None
     verification_date: datetime
 
 

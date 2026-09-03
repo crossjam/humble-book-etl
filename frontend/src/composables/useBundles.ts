@@ -35,15 +35,32 @@ export function useBundles(options: UseBundlesOptions = {}) {
       }),
   );
 
+  const fetchBundles = async () => {
+    if (!options.includeInactive) {
+      return get<Bundle[]>("/bundles");
+    }
+
+    const pageSize = 100;
+    const result: Bundle[] = [];
+    let offset = 0;
+    while (true) {
+      const page = await get<Bundle[]>(
+        `/bundles?include_inactive=true&limit=${pageSize}&offset=${offset}`,
+      );
+      result.push(...page);
+      if (page.length < pageSize) {
+        return result;
+      }
+      offset += page.length;
+    }
+  };
+
   const fetchData = async () => {
     loading.value = true;
     error.value = null;
     try {
       // Cargar bundles primero
-      const endpoint = options.includeInactive
-        ? "/bundles?include_inactive=true"
-        : "/bundles";
-      const all = await get<Bundle[]>(endpoint);
+      const all = await fetchBundles();
       bundles.value = all;
       
       // Intentar cargar featured, pero no fallar si no existe (404)

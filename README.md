@@ -185,8 +185,8 @@ The FastAPI metadata for this release is `1.0.1`.
 Public endpoints:
 
 - `GET /health`: service status.
-- `GET /bundles`: active bundles ordered by closing date. Supports `limit` (default 100, maximum 1000) and `offset` (default 0).
-- `GET /bundles?include_inactive=true`: includes retained inactive bundles, including expired/archived and other non-current records, with the same bounded pagination.
+- `GET /bundles`: active bundles ordered by closing date. Existing calls return the full active collection; optional `limit` (maximum 1000) and `offset` (default 0) enable bounded paging.
+- `GET /bundles?include_inactive=true`: includes retained inactive bundles, including expired/archived and other non-current records. This opt-in view defaults to 100 records per page; pass `limit` and `offset` for subsequent pages.
 - `GET /bundles/{bundle_id}`: bundle by UUID, including retained inactive bundles when the UUID is known.
 - `GET /bundles/by-machine-name/{machine_name}`: bundle by `machine_name`, including retained inactive bundles.
 - `GET /bundles/featured`: featured bundle by MSRP and sales.
@@ -194,7 +194,7 @@ Public endpoints:
 - `GET /landing-page-raw-data/latest`: latest raw snapshot.
 - `GET /landing-page-raw-data/{raw_data_id}`: raw snapshot by UUID.
 
-The collection order is stable: descending `end_date_datetime`, then descending bundle ID. The utility uses the default bounded page; a future UI increment can add next-page controls if the archive exceeds that page.
+The collection order is stable: descending `end_date_datetime`, then descending bundle ID. The utility fetches all archive pages before calculating counts and filters; each request is bounded to 100 records.
 
 
 Authentication endpoints:
@@ -212,7 +212,7 @@ At startup, the API and ETL add the nullable `archived_at` column and its index 
 
 SQLite deployments require a verified copy of the database file before rollout. PostgreSQL deployments require a verified `pg_dump` before rollout and restore through the normal PostgreSQL recovery procedure. In either case, restore the pre-migration backup to roll back; startup migration is additive but state normalization is not reversible in place.
 
-The lifecycle states are intentionally small: current (`is_active=true`, `archived_at=NULL`), archived/expired (`is_active=false`, `archived_at` set), and non-current/unarchived (`is_active=false`, `archived_at=NULL`, such as scheduled or source-inactive data). The opt-in collection returns both non-current categories; the UI presents them together as inactive. `archived_at` marks the current archived period: it is set when an expired bundle is archived, cleared only when a valid current record reappears, and set again if that bundle later expires again. Retained bundle metadata and captured `raw_html` remain public through known-ID detail endpoints by design; this increment assumes those payloads contain no private data.
+The lifecycle states are intentionally small: current (`is_active=true`, `archived_at=NULL`), archived/expired (`is_active=false`, `archived_at` set), and non-current/unarchived (`is_active=false`, `archived_at=NULL`, such as scheduled or source-inactive data). The opt-in collection returns both non-current categories; the UI presents them together as inactive. `archived_at` marks the current archived period: it is set when an expired bundle is archived, cleared only when a valid current record reappears, and set again if that bundle later expires again. Retained bundle metadata remains public through known-ID detail endpoints by design, but public bundle responses omit retained `raw_html`; this increment assumes the remaining public fields contain no private data.
 
 ## Tests
 

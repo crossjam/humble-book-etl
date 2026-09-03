@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.orm import Session
 
 from api.main import app, get_async_db, get_featured_bundle, list_bundles
+from api.schemas import BundleResponse
 from spider.database.models import Base, Bundle
 from spider.database.persistence import (
     _archive_state_update,
@@ -85,7 +86,10 @@ def test_archiving_is_idempotent_and_preserves_timestamp_for_current_period(engi
         assert retained.archived_at == first_archived_at
 
 
-def test_archive_state_normalization_is_postgresql_compatible():
+def test_public_bundle_response_omits_raw_html():
+    assert "raw_html" not in BundleResponse.model_fields
+
+
     sql = str(_archive_state_update().compile(dialect=postgresql.dialect()))
     assert "IS NOT false" in sql
     assert "!= 0" not in sql

@@ -292,7 +292,7 @@ async def get_featured_bundle(db: AsyncSession = Depends(get_async_db)):
 @app.get('/bundles', response_model=list[BundleResponse], tags=['bundles'])
 async def list_bundles(
     include_inactive: Annotated[bool, Query(description='Include archived/inactive bundles')] = False,
-    limit: Annotated[int, Query(ge=1, le=1000, description='Maximum bundles to return')] = 100,
+    limit: Annotated[int | None, Query(ge=1, le=1000, description='Maximum bundles to return')] = None,
     offset: Annotated[int, Query(ge=0, description='Number of bundles to skip')] = 0,
     db: AsyncSession = Depends(get_async_db),
 ):
@@ -302,12 +302,16 @@ async def list_bundles(
             Bundle.is_active.is_(True),
             Bundle.archived_at.is_(None),
         )
-    result = await db.execute(
-        statement.order_by(
-            nulls_last(Bundle.end_date_datetime.desc()),
-            Bundle.id.desc(),
-        ).offset(offset).limit(limit)
+    page_size = limit if limit is not None else (100 if include_inactive else None)
+    ordered_statement = statement.order_by(
+        nulls_last(Bundle.end_date_datetime.desc()),
+        Bundle.id.desc(),
     )
+    if page_size is not None:
+        ordered_statement = ordered_statement.offset(offset).limit(page_size)
+    elif offset:
+        ordered_statement = ordered_statement.offset(offset)
+    result = await db.execute(ordered_statement)
     bundles = result.scalars().all()
     return bundles
 
