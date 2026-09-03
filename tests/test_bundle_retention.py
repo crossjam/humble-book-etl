@@ -10,7 +10,7 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import Session
 
-from api.main import app, get_async_db, get_featured_bundle, list_bundles
+from api.main import app, get_async_db, get_current_user, get_featured_bundle, list_bundles
 from api.schemas import BundleResponse
 from spider.database.models import Base, Bundle
 from spider.database.persistence import (
@@ -90,9 +90,49 @@ def test_public_bundle_response_omits_raw_html():
     assert "raw_html" not in BundleResponse.model_fields
 
 
+def test_archive_state_normalization_is_postgresql_compatible():
     sql = str(_archive_state_update().compile(dialect=postgresql.dialect()))
     assert "IS NOT false" in sql
     assert "!= 0" not in sql
+
+
+def test_api_pagination_can_use_a_fixed_snapshot(engine):
+    snapshot = datetime(2026, 9, 3, 12, 0)
+    with Session(engine) as session:
+        session.add_all([
+            Bundle(
+                id="before-snapshot",
+                machine_name="before-snapshot",
+                is_active=False,
+                archived_at=snapshot - timedelta(days=1),
+                end_date_datetime=snapshot - timedelta(days=2),
+                verification_date=snapshot - timedelta(minutes=1),
+            ),
+            Bundle(
+                id="after-snapshot",
+                machine_name="after-snapshot",
+                is_active=False,
+                archived_at=snapshot,
+                end_date_datetime=snapshot - timedelta(days=1),
+                verification_date=snapshot + timedelta(minutes=1),
+            ),
+        ])
+        session.commit()
+
+    async def exercise():
+        async_engine = create_async_engine(f"sqlite+aiosqlite:///{engine.url.database}")
+        async with async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)() as session:
+            page = await list_bundles(
+                include_inactive=True,
+                limit=100,
+                offset=0,
+                snapshot_at=snapshot,
+                db=session,
+            )
+        await async_engine.dispose()
+        return page
+
+    assert [bundle.id for bundle in asyncio.run(exercise())] == ["before-snapshot"]
 
 
 def test_api_list_supports_bounded_offset_pagination(engine):
@@ -217,6 +257,44 @@ def test_machine_name_route_returns_archived_bundle_over_http(engine):
 
     assert response.status_code == 200
     assert response.json()["id"] == "archived"
+
+
+def test_raw_html_requires_authenticated_replacement_endpoint(engine):
+    with Session(engine) as session:
+        session.add(Bundle(
+            id="bundle-with-html",
+            machine_name="bundle-with-html",
+            is_active=True,
+            end_date_datetime=datetime(2026, 9, 10, 12, 0),
+            raw_html="<html>retained</html>",
+        ))
+        session.commit()
+
+    async def override_async_db():
+        async_engine = create_async_engine(f"sqlite+aiosqlite:///{engine.url.database}")
+        try:
+            async with async_sessionmaker(
+                async_engine, class_=AsyncSession, expire_on_commit=False
+            )() as session:
+                yield session
+        finally:
+            await async_engine.dispose()
+
+    app.dependency_overrides[get_async_db] = override_async_db
+    app.dependency_overrides[get_current_user] = lambda: object()
+
+    async def exercise():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            return await client.get("/bundles/bundle-with-html/raw-html")
+
+    try:
+        response = asyncio.run(exercise())
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json()["raw_html"] == "<html>retained</html>"
 
 
 def test_reappearing_bundle_reactivates_same_row(engine):

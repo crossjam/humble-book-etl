@@ -27,6 +27,14 @@ class BundleResponse(BaseModel):
     verification_date: datetime
 
 
+class BundleRawHtmlResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    machine_name: str
+    raw_html: Optional[str] = None
+
+
 class ETLRunResponse(BaseModel):
     bundles_processed: int
     cleanup_ran: bool

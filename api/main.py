@@ -1,8 +1,10 @@
 from pathlib import Path
 import os
+from datetime import datetime
 from api.security import create_access_token, decode_access_token, verify_password
 from api.schemas import (
     BundleResponse,
+    BundleRawHtmlResponse,
     ETLRunResponse,
     LandingPageRawDataResponse,
     LoginRequest,
@@ -135,8 +137,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title='Humble Bundle ETL API',
-    version='1.0.1',
-    description='API v1.0.1 - Scraper original de Humble Bundle. Trigger ETL and query stored bundles.',
+    version='1.0.2',
+    description='API v1.0.2 - Scraper original de Humble Bundle. Trigger ETL and query stored bundles.',
     lifespan=lifespan,
     redoc_url=None,
     docs_url=None,
@@ -294,6 +296,7 @@ async def list_bundles(
     include_inactive: Annotated[bool, Query(description='Include archived/inactive bundles')] = False,
     limit: Annotated[int | None, Query(ge=1, le=1000, description='Maximum bundles to return')] = None,
     offset: Annotated[int, Query(ge=0, description='Number of bundles to skip')] = 0,
+    snapshot_at: Annotated[datetime | None, Query(description='Fixed UTC snapshot boundary')] = None,
     db: AsyncSession = Depends(get_async_db),
 ):
     statement = select(Bundle)
@@ -302,6 +305,8 @@ async def list_bundles(
             Bundle.is_active.is_(True),
             Bundle.archived_at.is_(None),
         )
+    if snapshot_at is not None:
+        statement = statement.where(Bundle.verification_date <= snapshot_at)
     page_size = limit if limit is not None else (100 if include_inactive else None)
     ordered_statement = statement.order_by(
         nulls_last(Bundle.end_date_datetime.desc()),
@@ -321,6 +326,23 @@ async def get_bundle_by_machine_name(machine_name: str, db: AsyncSession = Depen
     """Gets a bundle by machine_name, including retained inactive bundles."""
     result = await db.execute(
         select(Bundle).filter(Bundle.machine_name == machine_name)
+    )
+    bundle = result.scalar_one_or_none()
+    if not bundle:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail='Bundle not found')
+    return bundle
+
+
+@app.get('/bundles/{bundle_id}/raw-html', response_model=BundleRawHtmlResponse, tags=['bundles'])
+async def get_bundle_raw_html(
+    bundle_id: str,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Gets retained raw bundle HTML for authenticated operators."""
+    result = await db.execute(
+        select(Bundle).filter(Bundle.id == bundle_id)
     )
     bundle = result.scalar_one_or_none()
     if not bundle:

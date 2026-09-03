@@ -180,13 +180,13 @@ Flow:
 
 ## API
 
-The FastAPI metadata for this release is `1.0.1`.
+The FastAPI metadata for this release is `1.0.2`.
 
 Public endpoints:
 
 - `GET /health`: service status.
 - `GET /bundles`: active bundles ordered by closing date. Existing calls return the full active collection; optional `limit` (maximum 1000) and `offset` (default 0) enable bounded paging.
-- `GET /bundles?include_inactive=true`: includes retained inactive bundles, including expired/archived and other non-current records. This opt-in view defaults to 100 records per page; pass `limit` and `offset` for subsequent pages.
+- `GET /bundles?include_inactive=true`: includes retained inactive bundles, including expired/archived and other non-current records. This opt-in view defaults to 100 records per page; pass `limit`, `offset`, and one fixed `snapshot_at` UTC timestamp for subsequent pages.
 - `GET /bundles/{bundle_id}`: bundle by UUID, including retained inactive bundles when the UUID is known.
 - `GET /bundles/by-machine-name/{machine_name}`: bundle by `machine_name`, including retained inactive bundles.
 - `GET /bundles/featured`: featured bundle by MSRP and sales.
@@ -194,7 +194,7 @@ Public endpoints:
 - `GET /landing-page-raw-data/latest`: latest raw snapshot.
 - `GET /landing-page-raw-data/{raw_data_id}`: raw snapshot by UUID.
 
-The collection order is stable: descending `end_date_datetime`, then descending bundle ID. The utility fetches all archive pages before calculating counts and filters; each request is bounded to 100 records.
+The collection order is stable: descending `end_date_datetime`, then descending bundle ID. The utility takes one UTC `snapshot_at` boundary and fetches all archive pages against that boundary, deduplicating by bundle ID; records observed or updated after the snapshot are intentionally excluded from that load.
 
 
 Authentication endpoints:
@@ -205,6 +205,7 @@ Authentication endpoints:
 Protected endpoint:
 
 - `POST /etl/run`: runs the ETL and requires `Authorization: Bearer <token>`.
+- `GET /bundles/{bundle_id}/raw-html`: retrieves retained raw HTML and requires `Authorization: Bearer <token>`.
 
 ## Database migration
 
@@ -212,7 +213,9 @@ At startup, the API and ETL add the nullable `archived_at` column and its index 
 
 SQLite deployments require a verified copy of the database file before rollout. PostgreSQL deployments require a verified `pg_dump` before rollout and restore through the normal PostgreSQL recovery procedure. In either case, restore the pre-migration backup to roll back; startup migration is additive but state normalization is not reversible in place.
 
-The lifecycle states are intentionally small: current (`is_active=true`, `archived_at=NULL`), archived/expired (`is_active=false`, `archived_at` set), and non-current/unarchived (`is_active=false`, `archived_at=NULL`, such as scheduled or source-inactive data). The opt-in collection returns both non-current categories; the UI presents them together as inactive. `archived_at` marks the current archived period: it is set when an expired bundle is archived, cleared only when a valid current record reappears, and set again if that bundle later expires again. Retained bundle metadata remains public through known-ID detail endpoints by design, but public bundle responses omit retained `raw_html`; this increment assumes the remaining public fields contain no private data.
+The lifecycle states are intentionally small: current (`is_active=true`, `archived_at=NULL`), archived/expired (`is_active=false`, `archived_at` set), and non-current/unarchived (`is_active=false`, `archived_at=NULL`, such as scheduled or source-inactive data). The opt-in collection returns both non-current categories; the UI presents them together as inactive. `archived_at` marks the current archived period: it is set when an expired bundle is archived, cleared only when a valid current record reappears, and set again if that bundle later expires again. Retained bundle metadata remains public through known-ID detail endpoints by design, but public bundle responses omit retained `raw_html`; authenticated operators can retrieve it through the raw-HTML endpoint. This increment assumes the remaining public fields contain no private data.
+
+Rollout checklist: (1) take and verify a database backup; (2) deploy the schema-compatible backend and let startup apply the additive archive migration; (3) verify schema, row counts, and normalized archive states; (4) deploy the frontend; (5) if startup or smoke checks fail, restore the pre-migration backup and previous image. This staged order preserves the compatibility window for older clients.
 
 ## Tests
 

@@ -41,13 +41,20 @@ export function useBundles(options: UseBundlesOptions = {}) {
     }
 
     const pageSize = 100;
+    const snapshotAt = new Date().toISOString();
     const result: Bundle[] = [];
+    const seenIds = new Set<string>();
     let offset = 0;
     while (true) {
       const page = await get<Bundle[]>(
-        `/bundles?include_inactive=true&limit=${pageSize}&offset=${offset}`,
+        `/bundles?include_inactive=true&limit=${pageSize}&offset=${offset}&snapshot_at=${encodeURIComponent(snapshotAt)}`,
       );
-      result.push(...page);
+      for (const bundle of page) {
+        if (!seenIds.has(bundle.id)) {
+          seenIds.add(bundle.id);
+          result.push(bundle);
+        }
+      }
       if (page.length < pageSize) {
         return result;
       }
