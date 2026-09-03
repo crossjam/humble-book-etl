@@ -1,7 +1,7 @@
 # Default agent for this repo when no workflow-specific agent is set.
 agent = 'pi'
 # Default model for this repo when no workflow-specific model is set.
-model = ''
+model = 'gpt-5.6-terra'
 # Backup agent for this repo if the primary agent fails.
 backup_agent = ''
 # Backup model for this repo if the primary model fails.
@@ -21,7 +21,7 @@ excluded_commit_patterns = []
 # Display name shown for this repo in the TUI and output.
 display_name = ''
 # Reasoning for reviews in this repo. Legacy: fast, standard, thorough, maximum. Exact: low, medium, high, xhigh, max.
-review_reasoning = ''
+review_reasoning = 'high'
 # Reasoning for refine in this repo. Legacy: fast, standard, thorough, maximum. Exact: low, medium, high, xhigh, max.
 refine_reasoning = ''
 # Reasoning for fix in this repo. Legacy: fast, standard, thorough, maximum. Exact: low, medium, high, xhigh, max.
