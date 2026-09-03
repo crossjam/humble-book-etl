@@ -514,3 +514,85 @@ def test_archive_snapshot_header_is_exposed_to_browser_clients(engine):
     assert response.status_code == 200
     assert "X-Snapshot-At" in exposed
     assert response.headers.get("x-snapshot-at")
+
+
+def test_http_archive_cursor_preserves_microseconds_and_null_boundary(engine):
+    snapshot = datetime.now(timezone.utc).replace(microsecond=0)
+    now = snapshot.replace(tzinfo=None)
+    dated_end = now - timedelta(days=1, microseconds=-123456)
+    with Session(engine) as session:
+        session.add_all([
+            Bundle(
+                id="dated",
+                machine_name="dated",
+                is_active=False,
+                archived_at=now - timedelta(days=2),
+                end_date_datetime=dated_end,
+                verification_date=now - timedelta(minutes=1),
+            ),
+            Bundle(
+                id="null-a",
+                machine_name="null-a",
+                is_active=False,
+                archived_at=now - timedelta(days=2),
+                end_date_datetime=None,
+                verification_date=now - timedelta(minutes=1),
+            ),
+            Bundle(
+                id="null-b",
+                machine_name="null-b",
+                is_active=False,
+                archived_at=now - timedelta(days=2),
+                end_date_datetime=None,
+                verification_date=now - timedelta(minutes=1),
+            ),
+        ])
+        session.commit()
+
+    async def override_async_db():
+        async_engine = create_async_engine(f"sqlite+aiosqlite:///{engine.url.database}")
+        try:
+            async with async_sessionmaker(
+                async_engine, class_=AsyncSession, expire_on_commit=False
+            )() as session:
+                yield session
+        finally:
+            await async_engine.dispose()
+
+    app.dependency_overrides[get_async_db] = override_async_db
+
+    async def exercise():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            params = {
+                "include_inactive": "true",
+                "limit": "1",
+                "snapshot_at": snapshot.isoformat().replace("+00:00", "Z"),
+            }
+            first = await client.get("/bundles", params=params)
+            first_data = first.json()[0]
+            cursor_params = {
+                **params,
+                "before_end_date": f"{first_data['end_date_datetime']}Z",
+                "before_id": first_data["id"],
+            }
+            second = await client.get("/bundles", params=cursor_params)
+            second_data = second.json()[0]
+            null_params = {
+                **params,
+                "before_id": second_data["id"],
+            }
+            third = await client.get("/bundles", params=null_params)
+            return first, first_data, second, second_data, third
+
+    try:
+        first, first_data, second, second_data, third = asyncio.run(exercise())
+    finally:
+        app.dependency_overrides.clear()
+
+    assert first.status_code == 200
+    assert first_data["end_date_datetime"].endswith(".123456")
+    assert second.status_code == 200
+    assert second_data["id"] == "null-b"
+    assert third.status_code == 200
+    assert third.json()[0]["id"] == "null-a"

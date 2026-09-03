@@ -402,7 +402,7 @@ async def get_bundle_raw_html(
     db: AsyncSession = Depends(get_async_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Gets retained raw bundle HTML for authenticated operators."""
+    """Gets retained raw bundle HTML for any authenticated user."""
     result = await db.execute(
         select(Bundle).filter(Bundle.id == bundle_id)
     )
