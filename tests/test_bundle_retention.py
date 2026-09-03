@@ -1,0 +1,142 @@
+import asyncio
+from datetime import datetime, timedelta
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+import pytest
+from sqlalchemy import create_engine, inspect
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import Session
+
+from api.main import get_featured_bundle, list_bundles
+from spider.database.models import Base, Bundle
+from spider.database.persistence import (
+    ensure_columns,
+    persist_bundles,
+    remove_outdated_bundles,
+)
+from spider.schemas.bundle import BundleRecord
+
+
+@pytest.fixture
+def engine():
+    with TemporaryDirectory() as temp_dir:
+        db_path = Path(temp_dir) / "bundles.db"
+        test_engine = create_engine(f"sqlite:///{db_path}", future=True)
+        Base.metadata.create_all(test_engine)
+        yield test_engine
+        test_engine.dispose()
+
+
+def test_existing_schema_gets_archive_timestamp_column(engine):
+    with engine.begin() as connection:
+        connection.exec_driver_sql("DROP TABLE bundle")
+        connection.exec_driver_sql(
+            "CREATE TABLE bundle (id VARCHAR PRIMARY KEY, machine_name VARCHAR UNIQUE NOT NULL)"
+        )
+
+    ensure_columns(engine)
+
+    columns = {column["name"] for column in inspect(engine).get_columns("bundle")}
+    assert "archived_at" in columns
+
+
+def test_expired_bundle_is_archived_instead_of_deleted(engine):
+    now = datetime(2026, 9, 3, 12, 0)
+    with Session(engine) as session:
+        session.add(Bundle(
+            id="bundle-1",
+            machine_name="bundle-one",
+            start_date_datetime=now - timedelta(days=10),
+            end_date_datetime=now - timedelta(hours=1),
+            verification_date=now - timedelta(hours=2),
+            is_active=True,
+        ))
+        session.commit()
+
+        remove_outdated_bundles(session, now=now)
+
+        retained = session.get(Bundle, "bundle-1")
+        assert retained is not None
+        assert retained.is_active is False
+        assert retained.archived_at == now
+
+
+def test_archiving_is_idempotent_and_preserves_first_timestamp(engine):
+    now = datetime(2026, 9, 3, 12, 0)
+    first_archived_at = now - timedelta(minutes=30)
+    with Session(engine) as session:
+        session.add(Bundle(
+            id="bundle-1",
+            machine_name="bundle-one",
+            end_date_datetime=now - timedelta(hours=1),
+            verification_date=now - timedelta(hours=2),
+            is_active=False,
+            archived_at=first_archived_at,
+        ))
+        session.commit()
+
+        remove_outdated_bundles(session, now=now)
+
+        retained = session.get(Bundle, "bundle-1")
+        assert retained.archived_at == first_archived_at
+
+
+def test_api_list_defaults_to_active_bundles(engine):
+    now = datetime(2026, 9, 3, 12, 0)
+    with Session(engine) as session:
+        session.add_all([
+            Bundle(id="active", machine_name="active", is_active=True, end_date_datetime=now + timedelta(days=1)),
+            Bundle(
+                id="archived",
+                machine_name="archived",
+                is_active=False,
+                archived_at=now - timedelta(days=1),
+                end_date_datetime=now - timedelta(days=2),
+            ),
+        ])
+        session.commit()
+
+    async def exercise():
+        async_engine = create_async_engine(f"sqlite+aiosqlite:///{engine.url.database}")
+        async with async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)() as session:
+            default = await list_bundles(include_inactive=False, db=session)
+            all_bundles = await list_bundles(include_inactive=True, db=session)
+        await async_engine.dispose()
+        return default, all_bundles
+
+    default, all_bundles = asyncio.run(exercise())
+    assert [bundle.id for bundle in default] == ["active"]
+    assert {bundle.id for bundle in all_bundles} == {"active", "archived"}
+
+
+def test_api_featured_excludes_archived_bundles(engine):
+    now = datetime(2026, 9, 3, 12, 0)
+    with Session(engine) as session:
+        session.add_all([
+            Bundle(
+                id="active",
+                machine_name="active",
+                is_active=True,
+                end_date_datetime=now + timedelta(days=1),
+                msrp_total=10,
+            ),
+            Bundle(
+                id="archived",
+                machine_name="archived",
+                is_active=False,
+                archived_at=now - timedelta(days=1),
+                end_date_datetime=now - timedelta(days=2),
+                msrp_total=1000,
+            ),
+        ])
+        session.commit()
+
+    async def exercise():
+        async_engine = create_async_engine(f"sqlite+aiosqlite:///{engine.url.database}")
+        async with async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)() as session:
+            featured = await get_featured_bundle(db=session)
+        await async_engine.dispose()
+        return featured
+
+    assert asyncio.run(exercise()).id == "active"

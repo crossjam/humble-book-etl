@@ -18,6 +18,7 @@ class BundleResponse(BaseModel):
     end_date_datetime: Optional[datetime] = None
     duration_days: Optional[float] = None
     is_active: Optional[bool] = None
+    archived_at: Optional[datetime] = None
     price_tiers: Optional[List[Dict[str, Any]]] = None
     book_list: Optional[List[Dict[str, Any]]] = None
     featured_image: Optional[str] = None

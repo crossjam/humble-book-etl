@@ -52,6 +52,7 @@ class Bundle(Base):
     verification_date = Column(DateTime, default=datetime.utcnow, nullable=False)
     duration_days = Column(Float)
     is_active = Column(Boolean, default=False, index=True)
+    archived_at = Column(DateTime, nullable=True, index=True)
     price_tiers = Column(JSON)
     book_list = Column(JSON)  # Lista de libros con sus imágenes (image URLs extraídas de div.img-container)
     featured_image = Column(String)  # URL de imagen destacada extraída de div.img-container

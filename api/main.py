@@ -11,7 +11,7 @@ from api.schemas import (
 )
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, Query, status
 from fastapi.openapi.docs import (
     get_redoc_html,
     get_swagger_ui_html,
@@ -273,7 +273,10 @@ async def healthcheck():
 @app.get('/bundles/featured', response_model=BundleResponse, tags=['bundles'])
 async def get_featured_bundle(db: AsyncSession = Depends(get_async_db)):
     result = await db.execute(
-        select(Bundle).order_by(
+        select(Bundle).where(
+            Bundle.is_active.is_(True),
+            Bundle.archived_at.is_(None),
+        ).order_by(
             nulls_last(Bundle.msrp_total.desc()),
             nulls_last(Bundle.bundles_sold_decimal.desc()),
         ).limit(1)
@@ -286,10 +289,17 @@ async def get_featured_bundle(db: AsyncSession = Depends(get_async_db)):
 
 
 @app.get('/bundles', response_model=list[BundleResponse], tags=['bundles'])
-async def list_bundles(db: AsyncSession = Depends(get_async_db)):
-    result = await db.execute(
-        select(Bundle).order_by(Bundle.end_date_datetime.desc())
-    )
+async def list_bundles(
+    include_inactive: bool = Query(False, description='Include archived/inactive bundles'),
+    db: AsyncSession = Depends(get_async_db),
+):
+    statement = select(Bundle)
+    if not include_inactive:
+        statement = statement.where(
+            Bundle.is_active.is_(True),
+            Bundle.archived_at.is_(None),
+        )
+    result = await db.execute(statement.order_by(Bundle.end_date_datetime.desc()))
     bundles = result.scalars().all()
     return bundles
 

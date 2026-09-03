@@ -57,27 +57,27 @@ import BundleStats from '@/components/utilities/bundles/BundleStats.vue';
 import BundleFilters from '@/components/utilities/bundles/BundleFilters.vue';
 import BundleListItem from '@/components/utilities/bundles/BundleListItem.vue';
 
-const { bundles, loading, error, refresh } = useBundles();
+const { bundles, loading, error, refresh } = useBundles({ includeInactive: true });
 
 const statusFilter = ref<'all' | 'active' | 'inactive'>('all');
 const expandedBundles = ref<string | null>(null);
 const expandedBooks = ref<Set<string>>(new Set());
 
 const activeBundles = computed(() =>
-  bundles.value.filter((b) => b.is_active)
+  bundles.value.filter((b) => b.is_active && !b.archived_at)
 );
 
 const inactiveBundles = computed(() =>
-  bundles.value.filter((b) => !b.is_active)
+  bundles.value.filter((b) => !b.is_active || b.archived_at)
 );
 
 const filteredBundles = computed(() => {
   let filtered = bundles.value;
 
   if (statusFilter.value === 'active') {
-    filtered = filtered.filter((b) => b.is_active);
+    filtered = filtered.filter((b) => b.is_active && !b.archived_at);
   } else if (statusFilter.value === 'inactive') {
-    filtered = filtered.filter((b) => !b.is_active);
+    filtered = filtered.filter((b) => !b.is_active || b.archived_at);
   }
 
   return filtered.sort((a, b) => {

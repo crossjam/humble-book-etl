@@ -8,7 +8,11 @@ interface ETLRunResponse {
   cleanup_ran: boolean;
 }
 
-export function useBundles() {
+interface UseBundlesOptions {
+  includeInactive?: boolean;
+}
+
+export function useBundles(options: UseBundlesOptions = {}) {
   const bundles = ref<Bundle[]>([]);
   const featured = ref<Bundle | null>(null);
   const loading = ref(true);
@@ -19,7 +23,7 @@ export function useBundles() {
 
   const activeBundles = computed(() =>
     bundles.value
-      .filter((bundle) => bundle.is_active)
+      .filter((bundle) => bundle.is_active && !bundle.archived_at)
       .sort((a, b) => {
         const endDateA = a.end_date_datetime
           ? new Date(a.end_date_datetime).getTime()
@@ -36,7 +40,10 @@ export function useBundles() {
     error.value = null;
     try {
       // Cargar bundles primero
-      const all = await get<Bundle[]>("/bundles");
+      const endpoint = options.includeInactive
+        ? "/bundles?include_inactive=true"
+        : "/bundles";
+      const all = await get<Bundle[]>(endpoint);
       bundles.value = all;
       
       // Intentar cargar featured, pero no fallar si no existe (404)

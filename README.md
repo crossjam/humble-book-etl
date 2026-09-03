@@ -175,7 +175,7 @@ Flow:
 5. Visits each bundle page and reads `webpack-bundle-page-data`.
 6. Extracts tiers, books, total MSRP, and raw HTML.
 7. Validates records with Pydantic.
-8. Removes expired bundles.
+8. Archives expired bundles without deleting their metadata.
 9. Persists bundles by `machine_name` and stores raw snapshots with hashes.
 
 ## API
@@ -185,7 +185,8 @@ The FastAPI metadata for this release is `1.0.1`.
 Public endpoints:
 
 - `GET /health`: service status.
-- `GET /bundles`: bundles ordered by closing date.
+- `GET /bundles`: active bundles ordered by closing date.
+- `GET /bundles?include_inactive=true`: includes retained inactive bundles.
 - `GET /bundles/{bundle_id}`: bundle by UUID.
 - `GET /bundles/by-machine-name/{machine_name}`: bundle by `machine_name`.
 - `GET /bundles/featured`: featured bundle by MSRP and sales.
@@ -201,6 +202,15 @@ Authentication endpoints:
 Protected endpoint:
 
 - `POST /etl/run`: runs the ETL and requires `Authorization: Bearer <token>`.
+
+## Tests
+
+Install the development dependencies and run the pytest suite:
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest
+```
 
 ## Authentication
 

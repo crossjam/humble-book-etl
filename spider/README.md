@@ -62,7 +62,7 @@ El sistema implementa un pipeline ETL (Extract, Transform, Load) para obtener, n
 
 ## Flujo general
 
-- **`cli/run_spider.py`**: punto de entrada. Carga configuración (`DB_*`), ejecuta `HumbleSpider`, elimina bundles expirados y guarda los nuevos/actualizados.
+- **`cli/run_spider.py`**: punto de entrada. Carga configuración (`DB_*`), ejecuta `HumbleSpider`, archiva bundles expirados y guarda los nuevos/actualizados.
 - **`core/HumbleSpider`**: hace GET a `https://www.humblebundle.com/books`, lee el `<script id="landingPage-json-data">`, normaliza campos con pandas y Pydantic (`BundleRecord`), y para cada bundle consulta el detalle con `BundleDetailScraper`.
 - **`scrapers/BundleDetailScraper`**: descarga la página del bundle (`webpack-bundle-page-data`), extrae tiers, libros, MSRP total y tile_logo desde el JSON embebido.
 - **Persistencia**: `database/persistence.py` hace upsert de los bundles (clave `machine_name`) usando SQLite, recrea columnas faltantes y permite archivar el JSON bruto de `landingPage-json-data`.
@@ -105,6 +105,7 @@ El sistema implementa un pipeline ETL (Extract, Transform, Load) para obtener, n
 │     verification_date           TIMESTAMP  NOT NULL             │
 │     duration_days               FLOAT                           │
 │     is_active                   BOOLEAN  (INDEX)                │
+│     archived_at                 TIMESTAMP (INDEX)                │
 │     price_tiers                 TEXT (JSON)                    │
 │     book_list                   TEXT (JSON)                    │
 │     featured_image              VARCHAR                         │
@@ -184,7 +185,7 @@ La tabla `bundle` almacena los metadatos enriquecidos de cada bundle, y `landing
 │   │   └─> Busca por machine_name, actualiza o inserta                 │
 │                                                                      │
 │ remove_outdated_bundles(session)                                    │
-│   └─> DELETE bundles donde end_date_datetime < NOW()               │
+│   └─> archives bundles where end_date_datetime < NOW()             │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -195,6 +196,7 @@ La tabla `bundle` almacena los metadatos enriquecidos de cada bundle, y `landing
 - `bundle.start_date_datetime` (INDEX)
 - `bundle.end_date_datetime` (INDEX)
 - `bundle.is_active` (INDEX)
+- `bundle.archived_at` (INDEX)
 - `landing_page_raw_data.scraped_date` (INDEX)
 - `landing_page_raw_data.json_hash` (INDEX)
 
@@ -202,7 +204,7 @@ La tabla `bundle` almacena los metadatos enriquecidos de cada bundle, y `landing
 
 ### CLI
 
-- `cli/run_spider.py`: script ejecutable. Orquesta el flujo completo: lee settings con `get_settings()`, instancia `HumbleSpider`, captura `HumbleSpiderError` para salir con código distinto de cero, borra bundles expirados con `remove_outdated_bundles` y persiste resultados con `persist_bundles`. Crea sesiones usando `get_session_factory`.
+- `cli/run_spider.py`: script ejecutable. Orquesta el flujo completo: lee settings con `get_settings()`, instancia `HumbleSpider`, captura `HumbleSpiderError` para salir con código distinto de cero, archiva bundles expirados con `remove_outdated_bundles` y persiste resultados con `persist_bundles`. Crea sesiones usando `get_session_factory`.
 
 ### Core
 
@@ -246,7 +248,7 @@ La tabla `bundle` almacena los metadatos enriquecidos de cada bundle, y `landing
 - `database/persistence.py`: operaciones de persistencia y mantenimiento.
   - `persist_bundles`: SELECT/UPDATE en SQLite (busca por machine_name, actualiza o inserta).
   - `persist_landing_page_raw_data`: inserta el JSON bruto de landingPage con metadata.
-  - `remove_outdated_bundles`: borra bundles con `end_date_datetime` en el pasado.
+  - `remove_outdated_bundles`: archiva bundles con `end_date_datetime` en el pasado sin eliminar sus metadatos; preserva la primera fecha de archivado.
   - `recreate_database`: elimina el archivo SQLite si existe y recrea tablas y columnas.
   - `ensure_columns` y `ensure_landing_page_raw_data_table`: migraciones rápidas en SQL crudo para añadir columnas/tablas si faltan (usando tipos SQLite: TEXT, REAL, VARCHAR).
 
@@ -268,7 +270,7 @@ La tabla `bundle` almacena los metadatos enriquecidos de cada bundle, y `landing
 
 ## Esquema de datos (SQLite)
 
-- **bundle**: datos normalizados del listado + detalles (tiers, libros, tile_logo, HTML raw, flags `is_active`/`duration_days`).
+- **bundle**: datos normalizados del listado + detalles (tiers, libros, tile_logo, HTML raw, flags `is_active`/`archived_at`/`duration_days`).
 - **landing_page_raw_data**: snapshots del JSON bruto de `landingPage-json-data` con fecha de scraping, URL fuente, hash y versión opcional.
 
 **Nota**: Los tipos de datos usan SQLite (String en lugar de UUID, TEXT/JSON en lugar de JSONB, REAL en lugar de DOUBLE PRECISION).
@@ -290,7 +292,7 @@ python -m spider.cli.run_spider
 make etl
 ```
 
-El flujo creará tablas si no existen, borrará bundles expirados y hará upsert de los actuales en SQLite.
+El flujo creará tablas si no existen, archivará bundles expirados y hará upsert de los actuales en SQLite.
 
 El JSON bruto (`landingPage-json-data`) de la fase de extracción puede almacenarse en `landing_page_raw_data` combinando `HumbleSpider.get_raw_data_record()` con `persist_landing_page_raw_data()`.
 
