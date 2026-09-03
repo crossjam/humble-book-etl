@@ -1,7 +1,7 @@
 # Default agent for this repo when no workflow-specific agent is set.
 agent = 'pi'
 # Default model for this repo when no workflow-specific model is set.
-model = 'gpt-5.6-terra'
+model = 'exe-dev-openai/gpt-5.6-terra@llm'
 # Backup agent for this repo if the primary agent fails.
 backup_agent = ''
 # Backup model for this repo if the primary model fails.
