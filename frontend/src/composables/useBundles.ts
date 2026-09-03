@@ -1,6 +1,6 @@
 import { ref, computed, onMounted } from "vue";
 import type { Bundle } from "@/types/bundle";
-import { get, postLong, isAxiosError } from "@api/client";
+import { get, getResponse, postLong, isAxiosError } from "@api/client";
 import { useAuth } from "@composables/useAuth";
 
 interface ETLRunResponse {
@@ -41,7 +41,7 @@ export function useBundles(options: UseBundlesOptions = {}) {
     }
 
     const pageSize = 100;
-    const snapshotAt = new Date().toISOString();
+    let snapshotAt: string | null = null;
     const result: Bundle[] = [];
     const seenIds = new Set<string>();
     let beforeEndDate: string | null = null;
@@ -50,9 +50,19 @@ export function useBundles(options: UseBundlesOptions = {}) {
       const cursor: string = beforeId
         ? `&before_id=${encodeURIComponent(beforeId)}${beforeEndDate ? `&before_end_date=${encodeURIComponent(beforeEndDate)}` : ""}`
         : "";
-      const page: Bundle[] = await get<Bundle[]>(
-        `/bundles?include_inactive=true&limit=${pageSize}&snapshot_at=${encodeURIComponent(snapshotAt)}${cursor}`,
+      const snapshot: string = snapshotAt
+        ? `&snapshot_at=${encodeURIComponent(snapshotAt)}`
+        : "";
+      const response = await getResponse<Bundle[]>(
+        `/bundles?include_inactive=true&limit=${pageSize}${snapshot}${cursor}`,
       );
+      const page: Bundle[] = response.data;
+      if (!snapshotAt) {
+        snapshotAt = response.headers["x-snapshot-at"];
+        if (!snapshotAt) {
+          throw new Error("El API no devolvió un límite de snapshot para el historial.");
+        }
+      }
       for (const bundle of page) {
         if (!seenIds.has(bundle.id)) {
           seenIds.add(bundle.id);
@@ -65,14 +75,12 @@ export function useBundles(options: UseBundlesOptions = {}) {
       const last: Bundle = page[page.length - 1];
       beforeId = last.id;
       const endDate = last.end_date_datetime;
-      const normalizedEndDate = endDate && /(?:Z|[+-]\\d{2}:\\d{2})$/.test(endDate)
+      const normalizedEndDate = endDate && /(?:Z|[+-]\d{2}:\d{2})$/.test(endDate)
         ? endDate
         : endDate
           ? `${endDate}Z`
           : null;
-      beforeEndDate = normalizedEndDate
-        ? new Date(normalizedEndDate).toISOString()
-        : null;
+      beforeEndDate = normalizedEndDate;
     }
   };
 

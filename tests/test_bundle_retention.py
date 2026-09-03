@@ -99,7 +99,7 @@ def test_archive_state_normalization_is_postgresql_compatible():
 
 
 def test_api_pagination_can_use_a_fixed_snapshot(engine):
-    snapshot = datetime(2026, 9, 3, 12, 0, tzinfo=timezone.utc)
+    snapshot = datetime.now(timezone.utc).replace(microsecond=0)
     snapshot_db = snapshot.replace(tzinfo=None)
     with Session(engine) as session:
         session.add_all([
@@ -143,11 +143,10 @@ def test_api_list_supports_bounded_offset_pagination(engine):
     with Session(engine) as session:
         session.add_all([
             Bundle(
-                id=f"archived-{index}",
-                machine_name=f"archived-{index}",
-                is_active=False,
-                archived_at=now - timedelta(days=index + 1),
-                end_date_datetime=now - timedelta(days=index + 2),
+                id=f"active-{index}",
+                machine_name=f"active-{index}",
+                is_active=True,
+                end_date_datetime=now + timedelta(days=index + 1),
             )
             for index in range(3)
         ])
@@ -156,13 +155,13 @@ def test_api_list_supports_bounded_offset_pagination(engine):
     async def exercise():
         async_engine = create_async_engine(f"sqlite+aiosqlite:///{engine.url.database}")
         async with async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)() as session:
-            page = await list_bundles(include_inactive=True, limit=1, offset=1, db=session)
+            page = await list_bundles(include_inactive=False, limit=1, offset=1, db=session)
         await async_engine.dispose()
         return page
 
     page = asyncio.run(exercise())
     assert len(page) == 1
-    assert page[0].id == "archived-1"
+    assert page[0].id == "active-1"
 
 
 def test_api_list_defaults_to_active_bundles(engine):
@@ -380,7 +379,7 @@ def test_existing_archived_active_state_is_normalized(engine):
 
 
 def test_api_archive_pagination_uses_keyset_cursor(engine):
-    snapshot = datetime(2026, 9, 3, 12, 0, tzinfo=timezone.utc)
+    snapshot = datetime.now(timezone.utc).replace(microsecond=0)
     now = snapshot.replace(tzinfo=None)
     with Session(engine) as session:
         session.add_all([
@@ -425,7 +424,7 @@ def test_snapshot_at_requires_timezone_aware_utc(engine):
     with pytest.raises(HTTPException, match="UTC"):
         asyncio.run(list_bundles(include_inactive=True, snapshot_at=datetime(2026, 9, 3, 12, 0), db=None))
 def test_archive_pagination_rejects_mixed_offset_and_cursor(engine):
-    snapshot = datetime(2026, 9, 3, 12, 0, tzinfo=timezone.utc)
+    snapshot = datetime.now(timezone.utc).replace(microsecond=0)
     with pytest.raises(HTTPException, match="offset"):
         asyncio.run(list_bundles(
             include_inactive=True,

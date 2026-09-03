@@ -14,7 +14,7 @@ from api.schemas import (
 from contextlib import asynccontextmanager
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Response, status
 from fastapi.openapi.docs import (
     get_redoc_html,
     get_swagger_ui_html,
@@ -300,6 +300,7 @@ async def list_bundles(
     before_end_date: Annotated[datetime | None, Query(description='UTC end date cursor')] = None,
     before_id: Annotated[str | None, Query(description='Bundle ID cursor')] = None,
     db: AsyncSession = Depends(get_async_db),
+    response: Response = None,
 ):
     statement = select(Bundle)
     if not include_inactive:
@@ -307,6 +308,20 @@ async def list_bundles(
             Bundle.is_active.is_(True),
             Bundle.archived_at.is_(None),
         )
+    provided_snapshot = snapshot_at is not None
+    if include_inactive and offset > 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail='include_inactive pagination requires cursors instead of offset',
+        )
+    if before_id is not None and not provided_snapshot:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail='pagination cursors require snapshot_at',
+        )
+    if include_inactive and snapshot_at is None:
+        snapshot_at = datetime.now(timezone.utc)
+
     if offset > 0 and (snapshot_at is not None or before_id is not None or before_end_date is not None):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -319,6 +334,11 @@ async def list_bundles(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail='snapshot_at must be an offset-aware UTC timestamp',
             )
+        if snapshot_at > datetime.now(timezone.utc) + timedelta(seconds=5):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail='snapshot_at cannot be in the future',
+            )
         snapshot_db = snapshot_at.astimezone(timezone.utc).replace(tzinfo=None)
         statement = statement.where(Bundle.verification_date <= snapshot_db)
 
@@ -326,11 +346,6 @@ async def list_bundles(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail='before_end_date requires before_id',
-        )
-    if before_id is not None and snapshot_at is None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail='pagination cursors require snapshot_at',
         )
     if before_end_date is not None:
         if before_end_date.tzinfo is None or before_end_date.utcoffset() != timedelta(0):
@@ -349,6 +364,9 @@ async def list_bundles(
             Bundle.end_date_datetime.is_(None),
             Bundle.id < before_id,
         )
+
+    if include_inactive and response is not None:
+        response.headers['X-Snapshot-At'] = snapshot_at.astimezone(timezone.utc).isoformat().replace('+00:00', 'Z')
 
     page_size = limit if limit is not None else (100 if include_inactive else None)
     ordered_statement = statement.order_by(
