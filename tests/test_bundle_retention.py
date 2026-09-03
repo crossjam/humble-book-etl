@@ -469,3 +469,45 @@ def test_raw_html_endpoint_denies_unauthenticated_requests(engine):
 
     assert response.status_code == 401
     assert "private" not in response.text
+
+
+def test_archive_snapshot_header_is_exposed_to_browser_clients(engine):
+    with Session(engine) as session:
+        session.add(Bundle(
+            id="browser-archive",
+            machine_name="browser-archive",
+            is_active=False,
+            archived_at=datetime(2026, 9, 2, 12, 0),
+            end_date_datetime=datetime(2026, 9, 1, 12, 0),
+        ))
+        session.commit()
+
+    async def override_async_db():
+        async_engine = create_async_engine(f"sqlite+aiosqlite:///{engine.url.database}")
+        try:
+            async with async_sessionmaker(
+                async_engine, class_=AsyncSession, expire_on_commit=False
+            )() as session:
+                yield session
+        finally:
+            await async_engine.dispose()
+
+    app.dependency_overrides[get_async_db] = override_async_db
+
+    async def exercise():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            return await client.get(
+                "/bundles?include_inactive=true&limit=1",
+                headers={"Origin": "https://hbetl.aegean-skate.ts.net"},
+            )
+
+    try:
+        response = asyncio.run(exercise())
+    finally:
+        app.dependency_overrides.clear()
+
+    exposed = response.headers.get("access-control-expose-headers", "")
+    assert response.status_code == 200
+    assert "X-Snapshot-At" in exposed
+    assert response.headers.get("x-snapshot-at")

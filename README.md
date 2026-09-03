@@ -180,7 +180,7 @@ Flow:
 
 ## API
 
-The FastAPI metadata for this release is `1.0.2`.
+The FastAPI metadata for this release is `1.0.2`. This is a breaking API release: public `BundleResponse` no longer includes `raw_html`; existing consumers must migrate to the authenticated `/bundles/{bundle_id}/raw-html` endpoint.
 
 Public endpoints:
 
@@ -215,9 +215,9 @@ SQLite deployments require a verified copy of the database file before rollout. 
 
 The lifecycle states are intentionally small: current (`is_active=true`, `archived_at=NULL`), archived/expired (`is_active=false`, `archived_at` set), and non-current/unarchived (`is_active=false`, `archived_at=NULL`, such as scheduled or source-inactive data). The opt-in collection returns both non-current categories; the UI presents them together as inactive. `archived_at` marks the current archived period: it is set when an expired bundle is archived, cleared only when a valid current record reappears, and set again if that bundle later expires again. Retained bundle metadata remains public through known-ID detail endpoints by design, but public bundle responses omit retained `raw_html`; any authenticated user can retrieve it through the protected raw-HTML endpoint, and each access is logged. There is no automatic purge in this increment; archived normalized data and internal raw HTML are retained indefinitely until a separately reviewed operator deletion policy exists.
 
-Rollout checklist: (1) take and verify a database backup; (2) deploy the schema-compatible backend and let startup apply the additive archive migration; (3) verify schema, row counts, normalized archive states, and migration logs; specifically require zero rows with `archived_at IS NOT NULL AND is_active=true`, unchanged-or-increased Bundle row count, and a successful default active-only query; (4) deploy the frontend; (5) run a multi-page archive traversal and verify each snapshot-eligible ID appears at most once; (6) if startup or smoke checks fail, restore the pre-migration backup and previous image. This staged order preserves the compatibility window for older clients.
+Rollout checklist: (1) take and verify a database backup; (2) deploy the schema-compatible backend and let startup apply the additive archive migration; (3) verify schema, row counts, normalized archive states, and migration logs; specifically require zero rows with `archived_at IS NOT NULL AND is_active=true`, unchanged-or-increased Bundle row count, and a successful default active-only query; (4) deploy the frontend and migrated clients together because removal of public `raw_html` is breaking; (5) run a multi-page archive traversal and verify each snapshot-eligible ID appears at most once; (6) if startup or smoke checks fail, restore the pre-migration backup and previous image. This staged order preserves the backend/frontend compatibility window, not compatibility with pre-1.0.2 raw-HTML clients.
 
-Implementation checklist: (1) schema migration and backup/restore verification; (2) expiration and reappearance persistence invariants; (3) default/opt-in API visibility; (4) protected raw-HTML authorization and audit logging; (5) server-issued snapshot and keyset pagination with microsecond/null-date HTTP tests; (6) frontend archive traversal and manual-refresh recovery; (7) staged rollout validation.
+Implementation checklist: (1) schema migration and backup/restore verification; (2) expiration and reappearance persistence invariants; (3) default/opt-in API visibility; (4) public raw-HTML removal, authenticated access, and audit logging; (5) server-issued snapshot, CORS exposure, and keyset pagination with microsecond/null-date HTTP tests; (6) frontend archive traversal and manual-refresh recovery; (7) coordinated client migration from public `raw_html`; (8) staged rollout validation.
 
 ## Tests
 
