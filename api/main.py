@@ -3,6 +3,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from api.security import create_access_token, decode_access_token, verify_password
 from api.schemas import (
+    BundleHistoryResponse,
     BundleLifecycleEventResponse,
     BundleResponse,
     BundleRawHtmlResponse,
@@ -432,6 +433,81 @@ async def list_bundle_lifecycle_events(
     return result.scalars().all()
 
 
+@app.get(
+    '/bundle-history',
+    response_model=list[BundleHistoryResponse],
+    tags=['bundle-lifecycle'],
+)
+async def list_bundle_history(
+    event_type: Annotated[
+        Literal['extended', 'renewed', 'shortened', 'reactivated'] | None,
+        Query(description='Filter lifecycle history by event type'),
+    ] = None,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Return inactive bundle rows and lifecycle events in one history view."""
+    inactive_result = await db.execute(
+        select(Bundle).where(or_(
+            Bundle.is_active.is_(False),
+            Bundle.archived_at.is_not(None),
+        ))
+    )
+    inactive_bundles = inactive_result.scalars().all()
+
+    event_statement = select(BundleLifecycleEvent)
+    if event_type is not None:
+        event_statement = event_statement.where(
+            BundleLifecycleEvent.event_type == event_type
+        )
+    event_result = await db.execute(
+        event_statement.order_by(
+            BundleLifecycleEvent.observed_at.desc(),
+            BundleLifecycleEvent.id.desc(),
+        )
+    )
+    events = event_result.scalars().all()
+
+    all_bundle_result = await db.execute(select(Bundle))
+    all_bundles_by_machine = {
+        bundle.machine_name: bundle for bundle in all_bundle_result.scalars().all()
+    }
+    history: list[tuple[datetime, dict]] = []
+    event_bundle_machines: set[str] = set()
+
+    for event in events:
+        bundle = all_bundles_by_machine.get(event.machine_name)
+        event_bundle_machines.add(event.machine_name)
+        history.append((
+            event.observed_at,
+            {
+                'id': event.id,
+                'record_type': 'lifecycle_event',
+                'machine_name': event.machine_name,
+                'bundle_title': event.bundle_title or (bundle.tile_name if bundle else None),
+                'bundle': bundle,
+                'event': event,
+            },
+        ))
+
+    for bundle in inactive_bundles:
+        if bundle.machine_name in event_bundle_machines:
+            continue
+        history.append((
+            bundle.verification_date,
+            {
+                'id': bundle.id,
+                'record_type': 'inactive_bundle',
+                'machine_name': bundle.machine_name,
+                'bundle_title': bundle.tile_name,
+                'bundle': bundle,
+                'event': None,
+            },
+        ))
+
+    history.sort(key=lambda item: (item[0], item[1]['id']), reverse=True)
+    return [item for _, item in history[offset:offset + limit]]
 @app.get(
     '/bundles/{bundle_id}/lifecycle-events',
     response_model=list[BundleLifecycleEventResponse],

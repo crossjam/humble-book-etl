@@ -61,11 +61,20 @@ export default {
   },
   inactiveBundles: {
     title: 'Inactive Bundles',
-    description: 'Browse bundles retained after leaving the active catalog.',
+    description: 'Browse inactive bundles and historical schedule changes.',
     loading: 'Loading inactive bundles...',
     refresh: 'Refresh',
-    count: 'inactive bundles',
-    empty: 'No inactive bundles found.',
+    count: 'history records',
+    empty: 'No inactive bundles or historical events found.',
+    previousEnd: 'Previous end',
+    newEnd: 'New end',
+    historicalOnly: 'Historical event; the normalized bundle record is no longer retained.',
+    events: {
+      extended: 'Extended',
+      renewed: 'Renewed',
+      shortened: 'Shortened',
+      reactivated: 'Reactivated',
+    },
   },
   extendedBundles: {
     title: 'Extended Bundles',

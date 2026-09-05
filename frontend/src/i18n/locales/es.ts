@@ -61,11 +61,20 @@ export default {
   },
   inactiveBundles: {
     title: 'Bundles Inactivos',
-    description: 'Explora bundles conservados tras salir del catálogo activo.',
+    description: 'Explora bundles inactivos y cambios históricos de calendario.',
     loading: 'Cargando bundles inactivos...',
     refresh: 'Actualizar',
-    count: 'bundles inactivos',
-    empty: 'No se encontraron bundles inactivos.',
+    count: 'registros históricos',
+    empty: 'No hay bundles inactivos ni eventos históricos.',
+    previousEnd: 'Fin anterior',
+    newEnd: 'Nuevo fin',
+    historicalOnly: 'Evento histórico; el registro normalizado del bundle ya no se conserva.',
+    events: {
+      extended: 'Extendido',
+      renewed: 'Renovado',
+      shortened: 'Acortado',
+      reactivated: 'Reactivado',
+    },
   },
   extendedBundles: {
     title: 'Bundles Extendidos',

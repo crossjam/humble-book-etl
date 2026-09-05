@@ -19,20 +19,6 @@ export interface BookItem {
   tiers?: string[];
 }
 
-export interface BundleLifecycleEvent {
-  id: string;
-  bundle_id?: string | null;
-  machine_name: string;
-  bundle_title?: string | null;
-  event_type: 'extended' | 'renewed' | 'shortened' | 'reactivated';
-  observed_at: string;
-  previous_start_at?: string | null;
-  previous_end_at?: string | null;
-  new_start_at?: string | null;
-  new_end_at?: string | null;
-  source_snapshot_id?: string | null;
-}
-
 export interface Bundle {
   id: string;
   machine_name: string;
@@ -54,3 +40,25 @@ export interface Bundle {
   end_date_datetime?: string;
 }
 
+export interface BundleLifecycleEvent {
+  id: string;
+  bundle_id?: string | null;
+  machine_name: string;
+  bundle_title?: string | null;
+  event_type: 'extended' | 'renewed' | 'shortened' | 'reactivated';
+  observed_at: string;
+  previous_start_at?: string | null;
+  previous_end_at?: string | null;
+  new_start_at?: string | null;
+  new_end_at?: string | null;
+  source_snapshot_id?: string | null;
+}
+
+export interface BundleHistoryItem {
+  id: string;
+  record_type: 'inactive_bundle' | 'lifecycle_event';
+  machine_name: string;
+  bundle_title?: string | null;
+  bundle?: Bundle | null;
+  event?: BundleLifecycleEvent | null;
+}

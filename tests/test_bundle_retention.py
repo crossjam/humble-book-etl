@@ -12,7 +12,7 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import Session
 
-from api.main import app, get_async_db, get_current_user, get_featured_bundle, list_bundles
+from api.main import app, get_async_db, get_current_user, get_featured_bundle, list_bundles, list_bundle_history
 from api.schemas import BundleResponse
 from spider.database.models import Base, Bundle, BundleLifecycleEvent, LandingPageRawData
 from spider.database.persistence import (
@@ -774,6 +774,45 @@ def test_raw_snapshot_backfill_is_idempotent(engine):
         assert event.event_type == 'extended'
         assert event.observed_at == second_time
         assert event.source_snapshot_id == 'snapshot-2'
+
+
+def test_unified_bundle_history_includes_event_only_and_inactive_rows(engine):
+    now = datetime(2026, 9, 5, 12, 0)
+    with Session(engine) as session:
+        session.add_all([
+            Bundle(
+                id='inactive-1',
+                machine_name='inactive-one',
+                tile_name='Archived bundle',
+                is_active=False,
+                archived_at=now - timedelta(days=1),
+                verification_date=now - timedelta(days=1),
+            ),
+            BundleLifecycleEvent(
+                id='event-1',
+                event_key='history-event-1',
+                machine_name='historical-only',
+                bundle_title='Historical extension',
+                event_type='extended',
+                observed_at=now,
+                previous_end_at=now - timedelta(days=1),
+                new_end_at=now + timedelta(days=3),
+            ),
+        ])
+        session.commit()
+
+    async def exercise():
+        async_engine = create_async_engine(f'sqlite+aiosqlite:///{engine.url.database}')
+        try:
+            async with async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)() as session:
+                result = await list_bundle_history(limit=100, offset=0, db=session)
+            return result
+        finally:
+            await async_engine.dispose()
+
+    history = asyncio.run(exercise())
+    assert {item['record_type'] for item in history} == {'inactive_bundle', 'lifecycle_event'}
+    assert {item['machine_name'] for item in history} == {'inactive-one', 'historical-only'}
 
 
 def test_lifecycle_events_are_available_over_http(engine):

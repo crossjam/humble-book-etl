@@ -194,6 +194,7 @@ Public endpoints:
 - `GET /landing-page-raw-data`: raw snapshots.
 - `GET /landing-page-raw-data/latest`: latest raw snapshot.
 - `GET /landing-page-raw-data/{raw_data_id}`: raw snapshot by UUID.
+- `GET /bundle-history`: unified inactive-bundle and lifecycle-event history for the UI.
 - `GET /bundle-lifecycle-events`: lists observed lifecycle changes; supports `machine_name`, `event_type`, `limit`, and `offset` filters.
 - `GET /bundles/{bundle_id}/lifecycle-events`: lists lifecycle changes associated with a retained bundle row.
 
