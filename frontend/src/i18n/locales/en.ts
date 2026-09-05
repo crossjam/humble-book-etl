@@ -54,7 +54,16 @@ export default {
     tabs: {
       activeBundles: 'Active Bundles',
       testsAndUtilities: 'Tests and Utilities',
+      inactiveBundles: 'Inactive Bundles',
     },
+  },
+  inactiveBundles: {
+    title: 'Inactive Bundles',
+    description: 'Browse bundles retained after leaving the active catalog.',
+    loading: 'Loading inactive bundles...',
+    refresh: 'Refresh',
+    count: 'inactive bundles',
+    empty: 'No inactive bundles found.',
   },
   featured: {
     eyebrow: 'Featured',

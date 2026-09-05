@@ -1,8 +1,10 @@
 from pathlib import Path
 import os
+from datetime import datetime, timedelta, timezone
 from api.security import create_access_token, decode_access_token, verify_password
 from api.schemas import (
     BundleResponse,
+    BundleRawHtmlResponse,
     ETLRunResponse,
     LandingPageRawDataResponse,
     LoginRequest,
@@ -10,12 +12,19 @@ from api.schemas import (
     UserResponse,
 )
 from contextlib import asynccontextmanager
+from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Response, status
+from fastapi.openapi.docs import (
+    get_redoc_html,
+    get_swagger_ui_html,
+    get_swagger_ui_oauth2_redirect_html,
+)
+from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import OAuth2PasswordBearer
-from sqlalchemy import nulls_last, select
+from sqlalchemy import and_, nulls_last, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -128,10 +137,37 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title='Humble Bundle ETL API',
-    version='1.0.1',
-    description='API v1.0.1 - Scraper original de Humble Bundle. Trigger ETL and query stored bundles.',
-    lifespan=lifespan
+    version='1.0.2',
+    description='API v1.0.2 - Scraper original de Humble Bundle. Trigger ETL and query stored bundles.',
+    lifespan=lifespan,
+    redoc_url=None,
+    docs_url=None,
 )
+
+
+@app.get('/docs', include_in_schema=False, response_class=HTMLResponse)
+async def swagger_ui_html() -> HTMLResponse:
+    return get_swagger_ui_html(
+        openapi_url='/openapi.json',
+        title=f'{app.title} - Swagger UI',
+        oauth2_redirect_url='/docs/oauth2-redirect',
+        swagger_js_url='https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js',
+        swagger_css_url='https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css',
+    )
+
+
+@app.get('/docs/oauth2-redirect', include_in_schema=False, response_class=HTMLResponse)
+async def swagger_ui_redirect() -> HTMLResponse:
+    return get_swagger_ui_oauth2_redirect_html()
+
+
+@app.get('/redoc', include_in_schema=False, response_class=HTMLResponse)
+async def redoc() -> HTMLResponse:
+    return get_redoc_html(
+        openapi_url='/openapi.json',
+        title=f'{app.title} - ReDoc',
+        redoc_js_url='https://cdn.jsdelivr.net/npm/redoc@latest/bundles/redoc.standalone.js',
+    )
 
 allowed_origins = [
     'http://localhost:3002',
@@ -150,6 +186,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=['*'],
     allow_headers=['*'],
+    expose_headers=['X-Snapshot-At'],
 )
 
 # Montar directorio de imágenes estáticas (local development)
@@ -240,7 +277,10 @@ async def healthcheck():
 @app.get('/bundles/featured', response_model=BundleResponse, tags=['bundles'])
 async def get_featured_bundle(db: AsyncSession = Depends(get_async_db)):
     result = await db.execute(
-        select(Bundle).order_by(
+        select(Bundle).where(
+            Bundle.is_active.is_(True),
+            Bundle.archived_at.is_(None),
+        ).order_by(
             nulls_last(Bundle.msrp_total.desc()),
             nulls_last(Bundle.bundles_sold_decimal.desc()),
         ).limit(1)
@@ -253,19 +293,101 @@ async def get_featured_bundle(db: AsyncSession = Depends(get_async_db)):
 
 
 @app.get('/bundles', response_model=list[BundleResponse], tags=['bundles'])
-async def list_bundles(db: AsyncSession = Depends(get_async_db)):
-    result = await db.execute(
-        select(Bundle).order_by(Bundle.end_date_datetime.desc())
+async def list_bundles(
+    include_inactive: Annotated[bool, Query(description='Include archived/inactive bundles')] = False,
+    limit: Annotated[int | None, Query(ge=1, le=1000, description='Maximum bundles to return')] = None,
+    offset: Annotated[int, Query(ge=0, description='Number of bundles to skip')] = 0,
+    snapshot_at: Annotated[datetime | None, Query(description='Fixed UTC snapshot boundary')] = None,
+    before_end_date: Annotated[datetime | None, Query(description='UTC end date cursor')] = None,
+    before_id: Annotated[str | None, Query(description='Bundle ID cursor')] = None,
+    db: AsyncSession = Depends(get_async_db),
+    response: Response = None,
+):
+    statement = select(Bundle)
+    if not include_inactive:
+        statement = statement.where(
+            Bundle.is_active.is_(True),
+            Bundle.archived_at.is_(None),
+        )
+    provided_snapshot = snapshot_at is not None
+    if include_inactive and offset > 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail='include_inactive pagination requires cursors instead of offset',
+        )
+    if before_id is not None and not provided_snapshot:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail='pagination cursors require snapshot_at',
+        )
+    if include_inactive and snapshot_at is None:
+        snapshot_at = datetime.now(timezone.utc)
+
+    if offset > 0 and (snapshot_at is not None or before_id is not None or before_end_date is not None):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail='offset cannot be combined with snapshot or cursor pagination',
+        )
+
+    if snapshot_at is not None:
+        if snapshot_at.tzinfo is None or snapshot_at.utcoffset() != timedelta(0):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail='snapshot_at must be an offset-aware UTC timestamp',
+            )
+        if snapshot_at > datetime.now(timezone.utc) + timedelta(seconds=5):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail='snapshot_at cannot be in the future',
+            )
+        snapshot_db = snapshot_at.astimezone(timezone.utc).replace(tzinfo=None)
+        statement = statement.where(Bundle.verification_date <= snapshot_db)
+
+    if before_end_date is not None and before_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail='before_end_date requires before_id',
+        )
+    if before_end_date is not None:
+        if before_end_date.tzinfo is None or before_end_date.utcoffset() != timedelta(0):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail='before_end_date must be an offset-aware UTC timestamp',
+            )
+        cursor_end_date = before_end_date.astimezone(timezone.utc).replace(tzinfo=None)
+        statement = statement.where(or_(
+            Bundle.end_date_datetime < cursor_end_date,
+            and_(Bundle.end_date_datetime == cursor_end_date, Bundle.id < before_id),
+            Bundle.end_date_datetime.is_(None),
+        ))
+    elif before_id is not None:
+        statement = statement.where(
+            Bundle.end_date_datetime.is_(None),
+            Bundle.id < before_id,
+        )
+
+    if include_inactive and response is not None:
+        response.headers['X-Snapshot-At'] = snapshot_at.astimezone(timezone.utc).isoformat().replace('+00:00', 'Z')
+
+    page_size = limit if limit is not None else (100 if include_inactive else None)
+    ordered_statement = statement.order_by(
+        nulls_last(Bundle.end_date_datetime.desc()),
+        Bundle.id.desc(),
     )
+    if page_size is not None:
+        ordered_statement = ordered_statement.offset(offset).limit(page_size)
+    elif offset:
+        ordered_statement = ordered_statement.offset(offset)
+    result = await db.execute(ordered_statement)
     bundles = result.scalars().all()
     return bundles
 
 
-@app.get('/bundles/{bundle_id}', response_model=BundleResponse, tags=['bundles'])
-async def get_bundle(bundle_id: str, db: AsyncSession = Depends(get_async_db)):
-    """Gets a bundle by its UUID."""
+@app.get('/bundles/by-machine-name/{machine_name}', response_model=BundleResponse, tags=['bundles'])
+async def get_bundle_by_machine_name(machine_name: str, db: AsyncSession = Depends(get_async_db)):
+    """Gets a bundle by machine_name, including retained inactive bundles."""
     result = await db.execute(
-        select(Bundle).filter(Bundle.id == bundle_id)
+        select(Bundle).filter(Bundle.machine_name == machine_name)
     )
     bundle = result.scalar_one_or_none()
     if not bundle:
@@ -274,11 +396,29 @@ async def get_bundle(bundle_id: str, db: AsyncSession = Depends(get_async_db)):
     return bundle
 
 
-@app.get('/bundles/by-machine-name/{machine_name}', response_model=BundleResponse, tags=['bundles'])
-async def get_bundle_by_machine_name(machine_name: str, db: AsyncSession = Depends(get_async_db)):
-    """Gets a bundle by its machine_name (backward compatibility)."""
+@app.get('/bundles/{bundle_id}/raw-html', response_model=BundleRawHtmlResponse, tags=['bundles'])
+async def get_bundle_raw_html(
+    bundle_id: str,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Gets retained raw bundle HTML for any authenticated user."""
     result = await db.execute(
-        select(Bundle).filter(Bundle.machine_name == machine_name)
+        select(Bundle).filter(Bundle.id == bundle_id)
+    )
+    bundle = result.scalar_one_or_none()
+    if not bundle:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail='Bundle not found')
+    logger.info('Raw HTML access bundle=%s user=%s', bundle_id, current_user.id)
+    return bundle
+
+
+@app.get('/bundles/{bundle_id}', response_model=BundleResponse, tags=['bundles'])
+async def get_bundle(bundle_id: str, db: AsyncSession = Depends(get_async_db)):
+    """Gets a bundle by UUID, including retained inactive bundles."""
+    result = await db.execute(
+        select(Bundle).filter(Bundle.id == bundle_id)
     )
     bundle = result.scalar_one_or_none()
     if not bundle:

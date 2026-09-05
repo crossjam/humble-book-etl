@@ -1,6 +1,6 @@
 import { ref, computed, onMounted } from "vue";
 import type { Bundle } from "@/types/bundle";
-import { get, postLong, isAxiosError } from "@api/client";
+import { get, getResponse, postLong, isAxiosError } from "@api/client";
 import { useAuth } from "@composables/useAuth";
 
 interface ETLRunResponse {
@@ -8,7 +8,11 @@ interface ETLRunResponse {
   cleanup_ran: boolean;
 }
 
-export function useBundles() {
+interface UseBundlesOptions {
+  includeInactive?: boolean;
+}
+
+export function useBundles(options: UseBundlesOptions = {}) {
   const bundles = ref<Bundle[]>([]);
   const featured = ref<Bundle | null>(null);
   const loading = ref(true);
@@ -18,15 +22,78 @@ export function useBundles() {
   const auth = useAuth();
 
   const activeBundles = computed(() =>
-    bundles.value.filter((bundle) => bundle.is_active),
+    bundles.value
+      .filter((bundle) => bundle.is_active && !bundle.archived_at)
+      .sort((a, b) => {
+        const endDateA = a.end_date_datetime
+          ? new Date(a.end_date_datetime).getTime()
+          : Number.POSITIVE_INFINITY;
+        const endDateB = b.end_date_datetime
+          ? new Date(b.end_date_datetime).getTime()
+          : Number.POSITIVE_INFINITY;
+        return endDateA - endDateB;
+      }),
   );
+
+  const fetchBundles = async (): Promise<Bundle[]> => {
+    if (!options.includeInactive) {
+      return get<Bundle[]>("/bundles");
+    }
+
+    const pageSize = 100;
+    const maxBundles = 10000;
+    let snapshotAt: string | null = null;
+    const result: Bundle[] = [];
+    const seenIds = new Set<string>();
+    let beforeEndDate: string | null = null;
+    let beforeId: string | null = null;
+    while (true) {
+      const cursor: string = beforeId
+        ? `&before_id=${encodeURIComponent(beforeId)}${beforeEndDate ? `&before_end_date=${encodeURIComponent(beforeEndDate)}` : ""}`
+        : "";
+      const snapshot: string = snapshotAt
+        ? `&snapshot_at=${encodeURIComponent(snapshotAt)}`
+        : "";
+      const response = await getResponse<Bundle[]>(
+        `/bundles?include_inactive=true&limit=${pageSize}${snapshot}${cursor}`,
+      );
+      const page: Bundle[] = response.data;
+      if (!snapshotAt) {
+        snapshotAt = response.headers["x-snapshot-at"];
+        if (!snapshotAt) {
+          throw new Error("El API no devolvió un límite de snapshot para el historial.");
+        }
+      }
+      for (const bundle of page) {
+        if (!seenIds.has(bundle.id)) {
+          seenIds.add(bundle.id);
+          result.push(bundle);
+        }
+      }
+      if (result.length >= maxBundles) {
+        throw new Error("El historial supera el máximo de 10.000 bundles para esta vista.");
+      }
+      if (page.length < pageSize) {
+        return result;
+      }
+      const last: Bundle = page[page.length - 1];
+      beforeId = last.id;
+      const endDate = last.end_date_datetime;
+      const normalizedEndDate = endDate && /(?:Z|[+-]\d{2}:\d{2})$/.test(endDate)
+        ? endDate
+        : endDate
+          ? `${endDate}Z`
+          : null;
+      beforeEndDate = normalizedEndDate;
+    }
+  };
 
   const fetchData = async () => {
     loading.value = true;
     error.value = null;
     try {
       // Cargar bundles primero
-      const all = await get<Bundle[]>("/bundles");
+      const all = await fetchBundles();
       bundles.value = all;
       
       // Intentar cargar featured, pero no fallar si no existe (404)

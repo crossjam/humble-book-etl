@@ -30,9 +30,13 @@ export async function get<T>(url: string) {
 	return data;
 }
 
+export async function getResponse<T>(url: string) {
+  return api.get<T>(url);
+}
+
 export async function post<T>(url: string, payload?: unknown) {
-	const { data } = await api.post<T>(url, payload);
-	return data;
+  const { data } = await api.post<T>(url, payload);
+  return data;
 }
 
 export async function postLong<T>(url: string, payload?: unknown) {

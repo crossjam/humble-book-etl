@@ -1,8 +1,8 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Iterable
 
 import logging
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, inspect, or_, text, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -80,6 +80,7 @@ def ensure_columns(engine) -> None:
         statements.append('ALTER TABLE bundle ADD COLUMN msrp_total REAL')
     if 'raw_html' not in columns:
         statements.append('ALTER TABLE bundle ADD COLUMN raw_html TEXT')
+    archive_column_needed = 'archived_at' not in columns
     
     for stmt in statements:
         try:
@@ -89,8 +90,69 @@ def ensure_columns(engine) -> None:
         except Exception as exc:
             logger.warning('Error agregando columna %s: %s', stmt, exc)
 
+    if archive_column_needed:
+        try:
+            with engine.begin() as connection:
+                connection.execute(text('ALTER TABLE bundle ADD COLUMN archived_at TIMESTAMP'))
+                logger.info('Columna agregada: ALTER TABLE bundle ADD COLUMN archived_at TIMESTAMP')
+        except Exception as exc:
+            raise RuntimeError('Could not add required bundle.archived_at column') from exc
 
-def persist_bundles(records: Iterable[BundleRecord], session: Session) -> None:
+    if 'archived_at' in columns or archive_column_needed:
+        try:
+            with engine.begin() as connection:
+                connection.execute(text(
+                    'CREATE INDEX IF NOT EXISTS ix_bundle_archived_at ON bundle (archived_at)'
+                ))
+                if 'verification_date' in {
+                    column['name'] for column in inspect(engine).get_columns('bundle')
+                }:
+                    connection.execute(text(
+                        'CREATE INDEX IF NOT EXISTS ix_bundle_verification_date ON bundle (verification_date)'
+                    ))
+                result = connection.execute(_archive_state_update())
+                if result.rowcount:
+                    logger.info('Normalized %s archived bundles as inactive', result.rowcount)
+        except Exception as exc:
+            raise RuntimeError('Could not initialize bundle archive state') from exc
+
+
+def _archive_state_update():
+    """Build a cross-dialect update enforcing archived-implies-inactive."""
+    return update(Bundle).where(
+        Bundle.archived_at.is_not(None),
+        Bundle.is_active.is_not(False),
+    ).values(is_active=False)
+
+
+def _utc_naive(value: datetime) -> datetime:
+    """Normalize aware timestamps to the naive UTC used by SQLite columns."""
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _is_expired(end_date: datetime | None, now: datetime) -> bool:
+    return end_date is not None and _utc_naive(end_date) < _utc_naive(now)
+
+
+def _is_current_payload(payload: dict, now: datetime) -> bool:
+    start_date = payload.get('start_date_datetime')
+    end_date = payload.get('end_date_datetime')
+    return (
+        payload.get('is_active') is True
+        and start_date is not None
+        and end_date is not None
+        and _utc_naive(start_date) <= _utc_naive(now)
+        and not _is_expired(end_date, now)
+    )
+
+
+def persist_bundles(
+    records: Iterable[BundleRecord],
+    session: Session,
+    now: datetime | None = None,
+) -> None:
     """
     Persiste los bundles en la base de datos SQLite.
     
@@ -104,6 +166,7 @@ def persist_bundles(records: Iterable[BundleRecord], session: Session) -> None:
     Raises:
         RuntimeError: Si ocurre un error al guardar los bundles en la BD.
     """
+    current_time = now or datetime.utcnow()
     for record in records:
         payload = record.to_orm_payload()
         try:
@@ -114,8 +177,26 @@ def persist_bundles(records: Iterable[BundleRecord], session: Session) -> None:
                 for key, value in payload.items():
                     if key != 'id':  # No actualizar el ID
                         setattr(existing, key, value)
+                if _is_current_payload(payload, current_time):
+                    # A reappearing bundle keeps its identity and becomes current again.
+                    existing.is_active = True
+                    existing.archived_at = None
+                elif _is_expired(payload.get('end_date_datetime'), current_time):
+                    existing.is_active = False
+                    if existing.archived_at is None:
+                        existing.archived_at = current_time
+                elif payload.get('is_active') is True:
+                    # Never restore an active state without a valid, future end date.
+                    existing.is_active = False
             else:
-                # Insertar nuevo bundle
+                if _is_current_payload(payload, current_time):
+                    payload['archived_at'] = None
+                elif _is_expired(payload.get('end_date_datetime'), current_time):
+                    payload['is_active'] = False
+                    payload['archived_at'] = current_time
+                elif payload.get('is_active') is True:
+                    payload['is_active'] = False
+                # Insertar un bundle nuevo
                 bundle = Bundle(**payload)
                 session.add(bundle)
             session.commit()
@@ -149,19 +230,26 @@ def persist_landing_page_raw_data(record: LandingPageRawDataRecord, session: Ses
         raise RuntimeError(f'Error guardando raw data de landingPage: {exc}') from exc
 
 
-def remove_outdated_bundles(session: Session) -> None:
-    """
-    Elimina los bundles que han expirado de la base de datos.
-    
-    Un bundle se considera expirado si su fecha de fin (end_date_datetime)
-    es anterior a la fecha/hora actual.
-    
-    Args:
-        session: Sesión de SQLAlchemy para la transacción.
-    """
-    current_time = datetime.utcnow()
-    session.query(Bundle).filter(Bundle.end_date_datetime < current_time).delete(synchronize_session=False)
+def remove_outdated_bundles(
+    session: Session,
+    now: datetime | None = None,
+) -> None:
+    """Archive expired bundles without deleting their normalized metadata."""
+    current_time = _utc_naive(now) if now is not None else datetime.utcnow()
+    expired = session.query(Bundle).filter(
+        Bundle.end_date_datetime < current_time,
+        or_(Bundle.is_active.is_(True), Bundle.archived_at.is_(None)),
+    ).all()
+
+    archived_count = 0
+    for bundle in expired:
+        bundle.is_active = False
+        if bundle.archived_at is None:
+            bundle.archived_at = current_time
+            archived_count += 1
+
     session.commit()
+    logger.info('Archived %s expired bundles', archived_count)
 
 
 def recreate_database(settings: Settings, drop_existing: bool = True) -> None:

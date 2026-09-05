@@ -49,9 +49,10 @@ class Bundle(Base):
     tile_image_information_config_image_type = Column(String)
     tile_image_information_config_gcs = Column(String)
     tile_image_information_config_imgix_master_image_image_type = Column(String)
-    verification_date = Column(DateTime, default=datetime.utcnow, nullable=False)
+    verification_date = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     duration_days = Column(Float)
     is_active = Column(Boolean, default=False, index=True)
+    archived_at = Column(DateTime, nullable=True, index=True)
     price_tiers = Column(JSON)
     book_list = Column(JSON)  # Lista de libros con sus imágenes (image URLs extraídas de div.img-container)
     featured_image = Column(String)  # URL de imagen destacada extraída de div.img-container

@@ -30,6 +30,7 @@ export interface Bundle {
   product_url?: string;
   duration_days?: number | null;
   is_active?: boolean;
+  archived_at?: string | null;
   price_tiers?: PriceTier[];
   book_list?: BookItem[];
   featured_image?: string | null;

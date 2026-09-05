@@ -6,7 +6,7 @@ persisting them with SQLAlchemy, and browsing them through a web interface.
 
 ## Current Status
 
-Repository release: `1.0.1`.
+Repository release: `1.0.2`.
 
 The reference branch for this release is `prod`. The real state of this branch
 is not "SQLite only": the application supports two database modes through
@@ -175,23 +175,27 @@ Flow:
 5. Visits each bundle page and reads `webpack-bundle-page-data`.
 6. Extracts tiers, books, total MSRP, and raw HTML.
 7. Validates records with Pydantic.
-8. Removes expired bundles.
+8. Archives expired bundles without deleting their metadata.
 9. Persists bundles by `machine_name` and stores raw snapshots with hashes.
 
 ## API
 
-The FastAPI metadata for this release is `1.0.1`.
+The FastAPI metadata for this release is `1.0.2`. This is a breaking API release: public `BundleResponse` no longer includes `raw_html`; existing consumers must migrate to the authenticated `/bundles/{bundle_id}/raw-html` endpoint.
 
 Public endpoints:
 
 - `GET /health`: service status.
-- `GET /bundles`: bundles ordered by closing date.
-- `GET /bundles/{bundle_id}`: bundle by UUID.
-- `GET /bundles/by-machine-name/{machine_name}`: bundle by `machine_name`.
+- `GET /bundles`: active bundles ordered by closing date. Existing calls return the full active collection; optional `limit` (maximum 1000) and `offset` (default 0) enable bounded paging.
+- `GET /bundles?include_inactive=true`: includes retained inactive bundles, including expired/archived and other non-current records. This opt-in view defaults to 100 records per page; pass `limit`, one fixed `snapshot_at` UTC timestamp, and the returned page’s `(before_end_date, before_id)` cursor for subsequent pages.
+- `GET /bundles/{bundle_id}`: bundle by UUID, including retained inactive bundles when the UUID is known.
+- `GET /bundles/by-machine-name/{machine_name}`: bundle by `machine_name`, including retained inactive bundles.
 - `GET /bundles/featured`: featured bundle by MSRP and sales.
 - `GET /landing-page-raw-data`: raw snapshots.
 - `GET /landing-page-raw-data/latest`: latest raw snapshot.
 - `GET /landing-page-raw-data/{raw_data_id}`: raw snapshot by UUID.
+
+The collection order is stable: descending `end_date_datetime`, then descending bundle ID. The archive view uses keyset pagination over that order. When omitted, the server chooses a UTC `snapshot_at` boundary and returns it in the `X-Snapshot-At` response header (`Z` format); callers may provide an offset-aware UTC value that is not more than five seconds ahead of server time. Subsequent requests reuse the boundary with the prior page’s cursor. After a non-null `end_date_datetime`, send both `before_end_date` and `before_id`; after a null end date, omit `before_end_date` and send only `before_id`; offset cannot be combined with snapshot/cursor pagination. This is a best-effort current-state traversal bounded by the observation timestamp, not an as-of historical reconstruction or a completeness guarantee if rows change concurrently. The utility fetches pages with the cursor and deduplicates by bundle ID; it caps one load at 10,000 bundles and operators should filter or export larger histories before changing that cap. If a page request fails or validation rejects a cursor, the utility shows an error; the user must refresh to restart with a new server-issued snapshot.
+
 
 Authentication endpoints:
 
@@ -201,6 +205,28 @@ Authentication endpoints:
 Protected endpoint:
 
 - `POST /etl/run`: runs the ETL and requires `Authorization: Bearer <token>`.
+- `GET /bundles/{bundle_id}/raw-html`: retrieves retained raw HTML and requires `Authorization: Bearer <token>`.
+
+## Database migration
+
+At startup, the API and ETL add the nullable `archived_at` column and its index if needed. Startup also normalizes any row with `archived_at` set to `is_active=false`; this is a one-way safety correction. Back up the configured database before deployment so rollback can restore the pre-migration state. The runtime account must have schema-alter and index-creation permissions; archive-lifecycle migration errors fail startup rather than serving a partially migrated lifecycle schema.
+
+SQLite deployments require a verified copy of the database file before rollout. PostgreSQL deployments require a verified `pg_dump` before rollout and restore through the normal PostgreSQL recovery procedure. In either case, restore the pre-migration backup to roll back; startup migration is additive but state normalization is not reversible in place.
+
+The lifecycle states are intentionally small: current (`is_active=true`, `archived_at=NULL`), archived/expired (`is_active=false`, `archived_at` set), and non-current/unarchived (`is_active=false`, `archived_at=NULL`, such as scheduled or source-inactive data). The opt-in collection returns both non-current categories; the UI presents them together as inactive. `archived_at` marks the current archived period: it is set when an expired bundle is archived, cleared only when a valid current record reappears, and set again if that bundle later expires again. Retained bundle metadata remains public through known-ID detail endpoints by design, but public bundle responses omit retained `raw_html`; any authenticated user can retrieve it through the protected raw-HTML endpoint, and each successful access is logged. This is an intentional current-policy choice because the application has no user roles; role-based restriction is a future change, not an implicit assumption. There is no automatic purge in this increment; archived normalized data and internal raw HTML are retained indefinitely until a separately reviewed operator deletion policy exists. The current operating target is 10,000 bundles per archive load; monitor database size, backup duration, query latency, and traversal duration before increasing that limit or adding a purge/export policy.
+
+Rollout checklist: (1) take and verify a database backup; (2) deploy the schema-compatible backend and let startup apply the additive archive migration; (3) verify schema, row counts, normalized archive states, and migration logs; specifically require zero rows with `archived_at IS NOT NULL AND is_active=true`, unchanged-or-increased Bundle row count, and a successful default active-only query; (4) deploy the frontend and migrated clients together because removal of public `raw_html` is breaking; (5) run a multi-page archive traversal and verify each snapshot-eligible ID appears at most once, including microsecond and null-date boundaries; (6) if startup or smoke checks fail, restore the pre-migration backup and previous image. This staged order preserves the backend/frontend compatibility window, not compatibility with pre-1.0.2 raw-HTML clients.
+
+Implementation checklist: (1) schema migration and backup/restore verification; (2) expiration and reappearance persistence invariants; (3) default/opt-in API visibility; (4) public raw-HTML removal, authenticated access, and audit logging; (5) server-issued snapshot, CORS exposure, and keyset pagination with microsecond/null-date HTTP tests; (6) frontend archive traversal and manual-refresh recovery; (7) coordinated client migration from public `raw_html`; (8) staged rollout validation.
+
+## Tests
+
+Install the development dependencies and run the pytest suite:
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest
+```
 
 ## Authentication
 

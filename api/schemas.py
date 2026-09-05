@@ -18,13 +18,21 @@ class BundleResponse(BaseModel):
     end_date_datetime: Optional[datetime] = None
     duration_days: Optional[float] = None
     is_active: Optional[bool] = None
+    archived_at: Optional[datetime] = None
     price_tiers: Optional[List[Dict[str, Any]]] = None
     book_list: Optional[List[Dict[str, Any]]] = None
     featured_image: Optional[str] = None
     tile_logo: Optional[str] = None
     msrp_total: Optional[float] = None
-    raw_html: Optional[str] = None
     verification_date: datetime
+
+
+class BundleRawHtmlResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    machine_name: str
+    raw_html: Optional[str] = None
 
 
 class ETLRunResponse(BaseModel):
