@@ -235,7 +235,7 @@ def remove_outdated_bundles(
     now: datetime | None = None,
 ) -> None:
     """Archive expired bundles without deleting their normalized metadata."""
-    current_time = now or datetime.utcnow()
+    current_time = _utc_naive(now) if now is not None else datetime.utcnow()
     expired = session.query(Bundle).filter(
         Bundle.end_date_datetime < current_time,
         or_(Bundle.is_active.is_(True), Bundle.archived_at.is_(None)),

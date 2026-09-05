@@ -70,7 +70,7 @@ export function useBundles(options: UseBundlesOptions = {}) {
           result.push(bundle);
         }
       }
-      if (result.length > maxBundles) {
+      if (result.length >= maxBundles) {
         throw new Error("El historial supera el máximo de 10.000 bundles para esta vista.");
       }
       if (page.length < pageSize) {

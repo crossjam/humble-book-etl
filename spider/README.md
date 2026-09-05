@@ -185,7 +185,7 @@ La tabla `bundle` almacena los metadatos enriquecidos de cada bundle, y `landing
 │   │   └─> Busca por machine_name, actualiza o inserta                 │
 │                                                                      │
 │ remove_outdated_bundles(session)                                    │
-│   └─> archives bundles where end_date_datetime < NOW()             │
+│   └─> archiva bundles donde end_date_datetime < NOW()              │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
