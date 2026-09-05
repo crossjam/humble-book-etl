@@ -70,8 +70,13 @@ def get_session_factory(settings: Settings):
     Base.metadata.create_all(engine, checkfirst=True)
     
     # Importar aquí para evitar importaciones circulares
-    from .persistence import ensure_columns, ensure_landing_page_raw_data_table
-    
+    from .persistence import (
+        ensure_bundle_lifecycle_event_table,
+        ensure_columns,
+        ensure_landing_page_raw_data_table,
+    )
+
     ensure_columns(engine)
     ensure_landing_page_raw_data_table(engine)
+    ensure_bundle_lifecycle_event_table(engine)
     return sessionmaker(bind=engine, expire_on_commit=False, class_=Session)

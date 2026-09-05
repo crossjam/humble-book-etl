@@ -5,6 +5,7 @@ __pycache__/
 .cursor/
 node_modules/
 *.tsbuildinfo
+*.log
 .tsbuild/
 humble_bundle.db
 frontend/dist/

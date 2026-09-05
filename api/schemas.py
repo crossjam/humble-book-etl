@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, EmailStr
 
@@ -27,6 +27,31 @@ class BundleResponse(BaseModel):
     verification_date: datetime
 
 
+class BundleLifecycleEventResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    bundle_id: Optional[str] = None
+    machine_name: str
+    bundle_title: Optional[str] = None
+    event_type: str
+    observed_at: datetime
+    previous_start_at: Optional[datetime] = None
+    previous_end_at: Optional[datetime] = None
+    new_start_at: Optional[datetime] = None
+    new_end_at: Optional[datetime] = None
+    source_snapshot_id: Optional[str] = None
+
+
+class BundleHistoryResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    record_type: Literal['inactive_bundle', 'lifecycle_event']
+    machine_name: str
+    bundle_title: Optional[str] = None
+    bundle: Optional[BundleResponse] = None
+    event: Optional[BundleLifecycleEventResponse] = None
 class BundleRawHtmlResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

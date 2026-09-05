@@ -145,6 +145,7 @@ subpath.
 ## Commands
 
 - `make etl`: runs `python -m spider.cli.run_spider`.
+- `make lifecycle-backfill`: reconstructs observed schedule changes from retained landing-page snapshots.
 - `make api`: starts FastAPI locally on `http://0.0.0.0:5002`.
 - `make db-init`: initializes tables with the current `DB_*` configuration.
 - `make db-reset`: removes only the local SQLite file `humble_bundle.db`.
@@ -176,7 +177,7 @@ Flow:
 6. Extracts tiers, books, total MSRP, and raw HTML.
 7. Validates records with Pydantic.
 8. Archives expired bundles without deleting their metadata.
-9. Persists bundles by `machine_name` and stores raw snapshots with hashes.
+9. Persists append-only lifecycle events when a known bundle is extended, renewed, shortened, or reactivated.
 
 ## API
 
@@ -193,6 +194,9 @@ Public endpoints:
 - `GET /landing-page-raw-data`: raw snapshots.
 - `GET /landing-page-raw-data/latest`: latest raw snapshot.
 - `GET /landing-page-raw-data/{raw_data_id}`: raw snapshot by UUID.
+- `GET /bundle-history`: unified inactive-bundle and lifecycle-event history for the UI.
+- `GET /bundle-lifecycle-events`: lists observed lifecycle changes; supports `machine_name`, `event_type`, `limit`, and `offset` filters.
+- `GET /bundles/{bundle_id}/lifecycle-events`: lists lifecycle changes associated with a retained bundle row.
 
 The collection order is stable: descending `end_date_datetime`, then descending bundle ID. The archive view uses keyset pagination over that order. When omitted, the server chooses a UTC `snapshot_at` boundary and returns it in the `X-Snapshot-At` response header (`Z` format); callers may provide an offset-aware UTC value that is not more than five seconds ahead of server time. Subsequent requests reuse the boundary with the prior page’s cursor. After a non-null `end_date_datetime`, send both `before_end_date` and `before_id`; after a null end date, omit `before_end_date` and send only `before_id`; offset cannot be combined with snapshot/cursor pagination. This is a best-effort current-state traversal bounded by the observation timestamp, not an as-of historical reconstruction or a completeness guarantee if rows change concurrently. The utility fetches pages with the cursor and deduplicates by bundle ID; it caps one load at 10,000 bundles and operators should filter or export larger histories before changing that cap. If a page request fails or validation rejects a cursor, the utility shows an error; the user must refresh to restart with a new server-issued snapshot.
 
@@ -207,7 +211,25 @@ Protected endpoint:
 - `POST /etl/run`: runs the ETL and requires `Authorization: Bearer <token>`.
 - `GET /bundles/{bundle_id}/raw-html`: retrieves retained raw HTML and requires `Authorization: Bearer <token>`.
 
-## Database migration
+## Bundle lifecycle tracking
+
+The mutable `bundle` table remains the current projection. Schedule changes are also written to the append-only `bundle_lifecycle_event` table:
+
+- `extended`: the end date moved later without a new start date.
+- `renewed`: the source reported a later sale start date for the same `machine_name`.
+- `shortened`: the end date moved earlier.
+- `reactivated`: an inactive bundle became current again without a schedule change.
+
+Events retain the previous and new start/end windows, observation time, bundle identity when available, and an optional source snapshot ID. A deterministic event key makes ETL retries and snapshot backfills idempotent.
+
+Existing raw snapshots can be backfilled with:
+
+```bash
+python -m spider.cli.backfill_lifecycle_events
+```
+
+The backfill records observed date changes only; it does not infer renewals solely from a bundle being absent from a snapshot.
+
 
 At startup, the API and ETL add the nullable `archived_at` column and its index if needed. Startup also normalizes any row with `archived_at` set to `is_active=false`; this is a one-way safety correction. Back up the configured database before deployment so rollback can restore the pre-migration state. The runtime account must have schema-alter and index-creation permissions; archive-lifecycle migration errors fail startup rather than serving a partially migrated lifecycle schema.
 
@@ -306,6 +328,7 @@ Current tables:
 
 - `bundle`: normalized metadata, dates, active state, tiers, books, images,
   MSRP, and raw HTML.
+- `bundle_lifecycle_event`: append-only observed schedule changes with previous/new windows and source snapshot provenance.
 - `landing_page_raw_data`: snapshots of `landingPage-json-data`, date, source
   URL, hash, and optional version.
 - `user`: authentication users with `username`, `email`, `password_hash`, and

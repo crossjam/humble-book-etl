@@ -12,11 +12,13 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import Session
 
-from api.main import app, get_async_db, get_current_user, get_featured_bundle, list_bundles
+from api.main import app, get_async_db, get_current_user, get_featured_bundle, list_bundles, list_bundle_history
 from api.schemas import BundleResponse
-from spider.database.models import Base, Bundle
+from spider.database.models import Base, Bundle, BundleLifecycleEvent, LandingPageRawData
 from spider.database.persistence import (
     _archive_state_update,
+    backfill_lifecycle_events_from_raw_data,
+    ensure_bundle_lifecycle_event_table,
     ensure_columns,
     persist_bundles,
     remove_outdated_bundles,
@@ -596,3 +598,304 @@ def test_http_archive_cursor_preserves_microseconds_and_null_boundary(engine):
     assert second_data["id"] == "null-b"
     assert third.status_code == 200
     assert third.json()[0]["id"] == "null-a"
+
+
+def test_bundle_extension_creates_one_idempotent_lifecycle_event(engine):
+    now = datetime(2026, 9, 5, 12, 0)
+    start = now - timedelta(days=10)
+    old_end = now + timedelta(days=1)
+    new_end = now + timedelta(days=8)
+    with Session(engine) as session:
+        session.add(Bundle(
+            id='bundle-1',
+            machine_name='bundle-one',
+            tile_name='Bundle One',
+            start_date_datetime=start,
+            end_date_datetime=old_end,
+            verification_date=now - timedelta(days=1),
+            is_active=True,
+        ))
+        session.commit()
+
+        record = BundleRecord(
+            machine_name='bundle-one',
+            tile_name='Bundle One',
+            start_date_datetime=start,
+            end_date_datetime=new_end,
+            verification_date=now,
+            is_active=True,
+        )
+        persist_bundles(
+            [record],
+            session,
+            now=now,
+            source_snapshot_id='snapshot-extension',
+        )
+        persist_bundles(
+            [record],
+            session,
+            now=now,
+            source_snapshot_id='snapshot-extension',
+        )
+
+        events = session.query(BundleLifecycleEvent).all()
+        assert len(events) == 1
+        assert events[0].event_type == 'extended'
+        assert events[0].previous_end_at == old_end
+        assert events[0].new_end_at == new_end
+        assert events[0].bundle_id == 'bundle-1'
+        assert events[0].source_snapshot_id == 'snapshot-extension'
+
+
+def test_repeated_identical_window_transition_is_kept_per_snapshot(engine):
+    now = datetime(2026, 9, 5, 12, 0)
+    start = now - timedelta(days=10)
+    end_a = now + timedelta(days=1)
+    end_b = now + timedelta(days=8)
+    with Session(engine) as session:
+        session.add(Bundle(
+            id='bundle-1',
+            machine_name='bundle-one',
+            start_date_datetime=start,
+            end_date_datetime=end_a,
+            verification_date=now,
+            is_active=True,
+        ))
+        session.commit()
+
+        for end_date, snapshot_id, observed_at in (
+            (end_b, 'snapshot-1', now),
+            (end_a, 'snapshot-2', now + timedelta(hours=1)),
+            (end_b, 'snapshot-3', now + timedelta(hours=2)),
+        ):
+            persist_bundles(
+                [BundleRecord(
+                    machine_name='bundle-one',
+                    start_date_datetime=start,
+                    end_date_datetime=end_date,
+                    verification_date=observed_at,
+                    is_active=True,
+                )],
+                session,
+                now=observed_at,
+                source_snapshot_id=snapshot_id,
+            )
+
+        events = session.query(BundleLifecycleEvent).order_by(
+            BundleLifecycleEvent.observed_at
+        ).all()
+        assert [event.event_type for event in events] == [
+            'extended', 'shortened', 'extended'
+        ]
+        assert [event.source_snapshot_id for event in events] == [
+            'snapshot-1', 'snapshot-2', 'snapshot-3'
+        ]
+
+
+def test_lifecycle_event_table_is_created_for_existing_database(engine):
+    BundleLifecycleEvent.__table__.drop(engine)
+    ensure_bundle_lifecycle_event_table(engine)
+    assert 'bundle_lifecycle_event' in inspect(engine).get_table_names()
+
+
+def test_new_sale_window_is_tracked_as_renewed(engine):
+    now = datetime(2026, 9, 5, 12, 0)
+    old_start = now - timedelta(days=30)
+    old_end = now - timedelta(days=1)
+    new_start = now - timedelta(hours=1)
+    new_end = now + timedelta(days=14)
+    with Session(engine) as session:
+        session.add(Bundle(
+            id='bundle-1',
+            machine_name='bundle-one',
+            start_date_datetime=old_start,
+            end_date_datetime=old_end,
+            verification_date=old_end,
+            is_active=False,
+            archived_at=now - timedelta(hours=12),
+        ))
+        session.commit()
+
+        record = BundleRecord(
+            machine_name='bundle-one',
+            start_date_datetime=new_start,
+            end_date_datetime=new_end,
+            verification_date=now,
+            is_active=True,
+        )
+        persist_bundles([record], session, now=now)
+
+        event = session.query(BundleLifecycleEvent).one()
+        assert event.event_type == 'renewed'
+        assert event.previous_start_at == old_start
+        assert event.new_start_at == new_start
+
+
+def test_raw_snapshot_backfill_is_idempotent(engine):
+    first_time = datetime(2026, 9, 1, 5, 0)
+    second_time = datetime(2026, 9, 2, 5, 0)
+
+    def snapshot(end_date: str):
+        return {
+            'data': {
+                'books': {
+                    'mosaic': [{
+                        'products': [{
+                            'machine_name': 'bundle-one',
+                            'tile_name': 'Bundle One',
+                            'start_date|datetime': '2026-08-20T18:00:00',
+                            'end_date|datetime': end_date,
+                        }],
+                    }],
+                },
+            },
+        }
+
+    with Session(engine) as session:
+        session.add_all([
+            LandingPageRawData(
+                id='snapshot-1',
+                json_data=snapshot('2026-09-03T18:00:00'),
+                scraped_date=first_time,
+                source_url='https://example.test/books',
+            ),
+            LandingPageRawData(
+                id='snapshot-2',
+                json_data=snapshot('2026-09-10T18:00:00'),
+                scraped_date=second_time,
+                source_url='https://example.test/books',
+            ),
+        ])
+        session.commit()
+
+        assert backfill_lifecycle_events_from_raw_data(session) == 1
+        assert backfill_lifecycle_events_from_raw_data(session) == 0
+        event = session.query(BundleLifecycleEvent).one()
+        assert event.event_type == 'extended'
+        assert event.observed_at == second_time
+        assert event.source_snapshot_id == 'snapshot-2'
+
+
+def test_unified_bundle_history_includes_event_only_and_inactive_rows(engine):
+    now = datetime(2026, 9, 5, 12, 0)
+    with Session(engine) as session:
+        session.add_all([
+            Bundle(
+                id='inactive-1',
+                machine_name='inactive-one',
+                tile_name='Archived bundle',
+                is_active=False,
+                archived_at=now - timedelta(days=1),
+                verification_date=now - timedelta(days=1),
+            ),
+            BundleLifecycleEvent(
+                id='event-1',
+                event_key='history-event-1',
+                machine_name='historical-only',
+                bundle_title='Historical extension',
+                event_type='extended',
+                observed_at=now,
+                previous_end_at=now - timedelta(days=1),
+                new_end_at=now - timedelta(hours=1),
+            ),
+        ])
+        session.commit()
+
+    async def exercise():
+        async_engine = create_async_engine(f'sqlite+aiosqlite:///{engine.url.database}')
+        try:
+            async with async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)() as session:
+                result = await list_bundle_history(limit=100, offset=0, db=session)
+            return result
+        finally:
+            await async_engine.dispose()
+
+    history = asyncio.run(exercise())
+    assert {item['record_type'] for item in history} == {'inactive_bundle', 'lifecycle_event'}
+    assert {item['machine_name'] for item in history} == {'inactive-one', 'historical-only'}
+
+
+def test_unified_bundle_history_excludes_future_end_dates(engine):
+    now = datetime(2026, 9, 5, 12, 0)
+    with Session(engine) as session:
+        session.add_all([
+            Bundle(
+                id='future-active',
+                machine_name='future-active',
+                tile_name='Still active bundle',
+                is_active=True,
+                end_date_datetime=now + timedelta(days=2),
+                verification_date=now,
+            ),
+            BundleLifecycleEvent(
+                id='future-event',
+                event_key='future-history-event',
+                machine_name='future-only',
+                bundle_title='Future extension',
+                event_type='extended',
+                observed_at=now,
+                previous_end_at=now - timedelta(days=1),
+                new_end_at=now + timedelta(days=2),
+            ),
+        ])
+        session.commit()
+
+    async def exercise():
+        async_engine = create_async_engine(f'sqlite+aiosqlite:///{engine.url.database}')
+        try:
+            async with async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)() as session:
+                return await list_bundle_history(limit=100, offset=0, db=session)
+        finally:
+            await async_engine.dispose()
+
+    history = asyncio.run(exercise())
+    assert all(item['machine_name'] not in {'future-active', 'future-only'} for item in history)
+
+
+def test_lifecycle_events_are_available_over_http(engine):
+    observed_at = datetime(2026, 9, 5, 12, 0)
+    with Session(engine) as session:
+        session.add(BundleLifecycleEvent(
+            id='event-1',
+            event_key='key-1',
+            bundle_id='bundle-1',
+            machine_name='bundle-one',
+            bundle_title='Bundle One',
+            event_type='extended',
+            observed_at=observed_at,
+            previous_end_at=datetime(2026, 9, 5, 18, 0),
+            new_end_at=datetime(2026, 9, 12, 18, 0),
+        ))
+        session.commit()
+
+    async def override_async_db():
+        async_engine = create_async_engine(f'sqlite+aiosqlite:///{engine.url.database}')
+        try:
+            async with async_sessionmaker(
+                async_engine, class_=AsyncSession, expire_on_commit=False
+            )() as session:
+                yield session
+        finally:
+            await async_engine.dispose()
+
+    app.dependency_overrides[get_async_db] = override_async_db
+
+    async def exercise():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url='http://test') as client:
+            global_page = await client.get('/bundle-lifecycle-events?event_type=extended')
+            scoped_page = await client.get('/bundles/bundle-1/lifecycle-events?limit=1&offset=0')
+            invalid_type = await client.get('/bundle-lifecycle-events?event_type=invalid')
+            return global_page, scoped_page, invalid_type
+
+    try:
+        response, scoped_response, invalid_response = asyncio.run(exercise())
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json()[0]['machine_name'] == 'bundle-one'
+    assert response.json()[0]['event_type'] == 'extended'
+    assert scoped_response.status_code == 200
+    assert scoped_response.json()[0]['id'] == 'event-1'
+    assert invalid_response.status_code == 422

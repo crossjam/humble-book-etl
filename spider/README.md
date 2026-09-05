@@ -129,7 +129,11 @@ El sistema implementa un pipeline ETL (Extract, Transform, Load) para obtener, n
 └────────────────────────────────────────────────┘
 ```
 
-La tabla `bundle` almacena los metadatos enriquecidos de cada bundle, y `landing_page_raw_data` guarda el JSON bruto del script `landingPage-json-data` con su metadata (fecha, hash, versión) para trazabilidad y auditoría.
+La tabla `bundle` almacena los metadatos enriquecidos, `bundle_lifecycle_event` conserva cambios de calendario de forma append-only, y `landing_page_raw_data` guarda el JSON bruto para trazabilidad y auditoría.
+
+### Tabla bundle_lifecycle_event
+
+Cada evento conserva `machine_name`, el `bundle_id` cuando existe, tipo (`extended`, `renewed`, `shortened` o `reactivated`), fecha de observación, ventanas anterior/nueva y el snapshot fuente opcional. `event_key` evita duplicados durante reintentos y backfills.
 
 ## Flujo de Datos Completo
 
@@ -182,7 +186,7 @@ La tabla `bundle` almacena los metadatos enriquecidos de cada bundle, y `landing
 ├─────────────────────────────────────────────────────────────────────┤
 │ persist_bundles(records, session)                                   │
 │   ├─> SELECT/UPDATE en tabla 'bundle' (SQLite)                      │
-│   │   └─> Busca por machine_name, actualiza o inserta                 │
+│   └─> registra cambios de calendario en bundle_lifecycle_event      │
 │                                                                      │
 │ remove_outdated_bundles(session)                                    │
 │   └─> archiva bundles donde end_date_datetime < NOW()              │
@@ -198,7 +202,9 @@ La tabla `bundle` almacena los metadatos enriquecidos de cada bundle, y `landing
 - `bundle.is_active` (INDEX)
 - `bundle.verification_date` (INDEX)
 - `bundle.archived_at` (INDEX)
-- `landing_page_raw_data.scraped_date` (INDEX)
+- `bundle_lifecycle_event.event_key` (UNIQUE, INDEX)
+- `bundle_lifecycle_event.machine_name` (INDEX)
+- `bundle_lifecycle_event.observed_at` (INDEX)
 - `landing_page_raw_data.json_hash` (INDEX)
 
 ## Explicación por archivo

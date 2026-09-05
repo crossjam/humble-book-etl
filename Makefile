@@ -1,4 +1,4 @@
-.PHONY: etl api db-init db-reset frontend-build frontend-dev docker-up docker-down docker-restart help
+.PHONY: etl lifecycle-backfill api db-init db-reset frontend-build frontend-dev docker-up docker-down docker-restart help
 
 VENV_BIN=.venv/bin
 DB_FILE=humble_bundle.db
@@ -6,6 +6,9 @@ CMD_DOCKER=docker compose
 
 etl:
 	@$(VENV_BIN)/python -m spider.cli.run_spider
+
+lifecycle-backfill:
+	@$(VENV_BIN)/python -m spider.cli.backfill_lifecycle_events
 
 api:
 	@$(VENV_BIN)/uvicorn api.main:app --reload --host 0.0.0.0 --port 5002
@@ -39,6 +42,7 @@ docker-restart:
 help:
 	@echo "Comandos disponibles:"
 	@echo "  make etl              - Ejecutar ETL para descargar bundles"
+	@echo "  make lifecycle-backfill - Backfill bundle schedule-change history"
 	@echo "  make api              - Iniciar servidor API localmente"
 	@echo "  make db-init          - Crear base de datos SQLite y tablas"
 	@echo "  make db-reset         - Eliminar y recrear base de datos SQLite"

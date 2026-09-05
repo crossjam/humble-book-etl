@@ -60,6 +60,27 @@ class Bundle(Base):
     raw_html = Column(String)  # HTML raw del bundle para tests
 
 
+class BundleLifecycleEvent(Base):
+    """Append-only history of observed bundle schedule changes."""
+    __tablename__ = 'bundle_lifecycle_event'
+    __table_args__ = (
+        UniqueConstraint('event_key', name='uq_bundle_lifecycle_event_key'),
+    )
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid4()), index=True)
+    event_key = Column(String, nullable=False)
+    bundle_id = Column(String, nullable=True, index=True)
+    machine_name = Column(String, nullable=False, index=True)
+    bundle_title = Column(String, nullable=True)
+    event_type = Column(String, nullable=False, index=True)
+    observed_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    previous_start_at = Column(DateTime, nullable=True)
+    previous_end_at = Column(DateTime, nullable=True)
+    new_start_at = Column(DateTime, nullable=True)
+    new_end_at = Column(DateTime, nullable=True)
+    source_snapshot_id = Column(String, nullable=True, index=True)
+
+
 class LandingPageRawData(Base):
     """
     Modelo ORM para almacenar el JSON raw de landingPage-json-data.
