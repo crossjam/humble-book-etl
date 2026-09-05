@@ -3,6 +3,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from api.security import create_access_token, decode_access_token, verify_password
 from api.schemas import (
+    BundleLifecycleEventResponse,
     BundleResponse,
     BundleRawHtmlResponse,
     ETLRunResponse,
@@ -12,7 +13,7 @@ from api.schemas import (
     UserResponse,
 )
 from contextlib import asynccontextmanager
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Response, status
 from fastapi.openapi.docs import (
@@ -40,7 +41,7 @@ from spider.database.persistence import (
 )
 from spider.core.spider import HumbleSpider
 from spider.core.errors import HumbleSpiderError
-from spider.database.models import Bundle, LandingPageRawData, User
+from spider.database.models import Bundle, BundleLifecycleEvent, LandingPageRawData, User
 from spider.config.settings import get_settings
 from spider.database.seed import ensure_admin_user
 
@@ -93,7 +94,11 @@ async def lifespan(app: FastAPI):
         await conn.run_sync(Base.metadata.create_all, checkfirst=True)
 
     # Ensure columns exist (works better with sync)
-    from spider.database.persistence import ensure_columns, ensure_landing_page_raw_data_table
+    from spider.database.persistence import (
+        ensure_bundle_lifecycle_event_table,
+        ensure_columns,
+        ensure_landing_page_raw_data_table,
+    )
     from spider.database.session import build_database_uri
     from sqlalchemy import create_engine
 
@@ -111,6 +116,7 @@ async def lifespan(app: FastAPI):
     try:
         ensure_columns(sync_engine)
         ensure_landing_page_raw_data_table(sync_engine)
+        ensure_bundle_lifecycle_event_table(sync_engine)
         SessionLocal = sessionmaker(
             bind=sync_engine, expire_on_commit=False, class_=Session)
         try:
@@ -396,6 +402,59 @@ async def get_bundle_by_machine_name(machine_name: str, db: AsyncSession = Depen
     return bundle
 
 
+@app.get(
+    '/bundle-lifecycle-events',
+    response_model=list[BundleLifecycleEventResponse],
+    tags=['bundle-lifecycle'],
+)
+async def list_bundle_lifecycle_events(
+    machine_name: Annotated[str | None, Query(description='Filter by bundle machine name')] = None,
+    event_type: Annotated[
+        Literal['extended', 'renewed', 'shortened', 'reactivated'] | None,
+        Query(description='Filter by lifecycle event type'),
+    ] = None,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    db: AsyncSession = Depends(get_async_db),
+):
+    """List observed bundle renewals, extensions, shortenings, and reactivations."""
+    statement = select(BundleLifecycleEvent)
+    if machine_name is not None:
+        statement = statement.where(BundleLifecycleEvent.machine_name == machine_name)
+    if event_type is not None:
+        statement = statement.where(BundleLifecycleEvent.event_type == event_type)
+    result = await db.execute(
+        statement.order_by(
+            BundleLifecycleEvent.observed_at.desc(),
+            BundleLifecycleEvent.id.desc(),
+        ).offset(offset).limit(limit)
+    )
+    return result.scalars().all()
+
+
+@app.get(
+    '/bundles/{bundle_id}/lifecycle-events',
+    response_model=list[BundleLifecycleEventResponse],
+    tags=['bundle-lifecycle'],
+)
+async def get_bundle_lifecycle_events(
+    bundle_id: str,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    db: AsyncSession = Depends(get_async_db),
+):
+    """List lifecycle events for a retained bundle row."""
+    result = await db.execute(
+        select(BundleLifecycleEvent).where(
+            BundleLifecycleEvent.bundle_id == bundle_id
+        ).order_by(
+            BundleLifecycleEvent.observed_at.desc(),
+            BundleLifecycleEvent.id.desc(),
+        ).offset(offset).limit(limit)
+    )
+    return result.scalars().all()
+
+
 @app.get('/bundles/{bundle_id}/raw-html', response_model=BundleRawHtmlResponse, tags=['bundles'])
 async def get_bundle_raw_html(
     bundle_id: str,
@@ -440,13 +499,19 @@ def trigger_etl(
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
-    remove_outdated_bundles(db)
-    persist_bundles(records, db)
-
-    # Save landing page raw data
+    raw_data = None
     raw_data_record = spider.get_raw_data_record()
     if raw_data_record:
-        persist_landing_page_raw_data(raw_data_record, db)
+        raw_data = persist_landing_page_raw_data(raw_data_record, db)
+
+    observed_at = raw_data_record.scraped_date if raw_data_record else None
+    remove_outdated_bundles(db, now=observed_at)
+    persist_bundles(
+        records,
+        db,
+        now=observed_at,
+        source_snapshot_id=raw_data.id if raw_data else None,
+    )
 
     return ETLRunResponse(
         bundles_processed=len(records),

@@ -1,18 +1,247 @@
 from datetime import datetime, timezone
+from hashlib import sha256
+import json
 from typing import Iterable
 
 import logging
 from sqlalchemy import create_engine, inspect, or_, text, update
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from ..config.settings import Settings
 from ..schemas.bundle import BundleRecord
 from ..schemas.raw_data import LandingPageRawDataRecord
-from .models import Base, Bundle, LandingPageRawData
+from .models import Base, Bundle, BundleLifecycleEvent, LandingPageRawData
 from .session import build_database_uri
 
 logger = logging.getLogger(__name__)
+
+
+def ensure_bundle_lifecycle_event_table(engine) -> None:
+    """Create the append-only lifecycle event table on existing deployments."""
+    try:
+        BundleLifecycleEvent.__table__.create(engine, checkfirst=True)
+    except Exception as exc:
+        raise RuntimeError('Could not initialize bundle lifecycle event table') from exc
+
+
+def _event_key(
+    machine_name: str,
+    event_type: str,
+    previous_start_at: datetime | None,
+    previous_end_at: datetime | None,
+    new_start_at: datetime | None,
+    new_end_at: datetime | None,
+    occurrence: str,
+) -> str:
+    values = (
+        machine_name,
+        event_type,
+        previous_start_at.isoformat() if previous_start_at else '',
+        previous_end_at.isoformat() if previous_end_at else '',
+        new_start_at.isoformat() if new_start_at else '',
+        new_end_at.isoformat() if new_end_at else '',
+        occurrence,
+    )
+    return sha256('|'.join(values).encode('utf-8')).hexdigest()
+
+
+def _classify_schedule_change(
+    previous_start_at: datetime | None,
+    previous_end_at: datetime | None,
+    new_start_at: datetime | None,
+    new_end_at: datetime | None,
+    *,
+    was_inactive: bool = False,
+    is_current: bool = False,
+) -> str | None:
+    """Classify a source-observed schedule transition."""
+    previous_start_at = _utc_naive(previous_start_at) if previous_start_at else None
+    previous_end_at = _utc_naive(previous_end_at) if previous_end_at else None
+    new_start_at = _utc_naive(new_start_at) if new_start_at else None
+    new_end_at = _utc_naive(new_end_at) if new_end_at else None
+
+    if (
+        previous_start_at is not None
+        and new_start_at is not None
+        and new_start_at > previous_start_at
+    ):
+        return 'renewed'
+    if previous_end_at is not None and new_end_at is not None:
+        if new_end_at > previous_end_at:
+            return 'extended'
+        if new_end_at < previous_end_at:
+            return 'shortened'
+    if was_inactive and is_current:
+        return 'reactivated'
+    return None
+
+
+def _add_lifecycle_event(
+    session: Session,
+    *,
+    machine_name: str,
+    event_type: str,
+    observed_at: datetime,
+    previous_start_at: datetime | None,
+    previous_end_at: datetime | None,
+    new_start_at: datetime | None,
+    new_end_at: datetime | None,
+    bundle_id: str | None = None,
+    bundle_title: str | None = None,
+    source_snapshot_id: str | None = None,
+) -> bool:
+    previous_start_at = _utc_naive(previous_start_at) if previous_start_at else None
+    previous_end_at = _utc_naive(previous_end_at) if previous_end_at else None
+    new_start_at = _utc_naive(new_start_at) if new_start_at else None
+    new_end_at = _utc_naive(new_end_at) if new_end_at else None
+    observed_at = _utc_naive(observed_at)
+    occurrence = source_snapshot_id or observed_at.isoformat()
+    key = _event_key(
+        machine_name,
+        event_type,
+        previous_start_at,
+        previous_end_at,
+        new_start_at,
+        new_end_at,
+        occurrence,
+    )
+    if session.query(BundleLifecycleEvent.id).filter_by(event_key=key).first():
+        return False
+
+    event = BundleLifecycleEvent(
+        event_key=key,
+        bundle_id=bundle_id,
+        machine_name=machine_name,
+        bundle_title=bundle_title,
+        event_type=event_type,
+        observed_at=observed_at,
+        previous_start_at=previous_start_at,
+        previous_end_at=previous_end_at,
+        new_start_at=new_start_at,
+        new_end_at=new_end_at,
+        source_snapshot_id=source_snapshot_id,
+    )
+    try:
+        with session.begin_nested():
+            session.add(event)
+            session.flush()
+    except IntegrityError:
+        return False
+    return True
+
+
+def _track_existing_bundle_change(
+    session: Session,
+    existing: Bundle,
+    payload: dict,
+    current_time: datetime,
+    source_snapshot_id: str | None = None,
+) -> None:
+    previous_start_at = existing.start_date_datetime
+    previous_end_at = existing.end_date_datetime
+    new_start_at = payload.get('start_date_datetime')
+    new_end_at = payload.get('end_date_datetime')
+    event_type = _classify_schedule_change(
+        previous_start_at,
+        previous_end_at,
+        new_start_at,
+        new_end_at,
+        was_inactive=existing.is_active is False or existing.archived_at is not None,
+        is_current=_is_current_payload(payload, current_time),
+    )
+    if event_type:
+        _add_lifecycle_event(
+            session,
+            machine_name=existing.machine_name,
+            bundle_id=existing.id,
+            bundle_title=payload.get('tile_name') or existing.tile_name,
+            event_type=event_type,
+            observed_at=current_time,
+            previous_start_at=previous_start_at,
+            previous_end_at=previous_end_at,
+            new_start_at=new_start_at,
+            new_end_at=new_end_at,
+            source_snapshot_id=source_snapshot_id,
+        )
+
+
+def _extract_snapshot_products(payload: dict) -> dict[str, dict]:
+    products: dict[str, dict] = {}
+    for section in payload.get('data', {}).values():
+        if not isinstance(section, dict):
+            continue
+        for mosaic in section.get('mosaic', []):
+            if not isinstance(mosaic, dict):
+                continue
+            for product in mosaic.get('products', []):
+                if isinstance(product, dict) and product.get('machine_name'):
+                    products[product['machine_name']] = product
+    return products
+
+
+def _snapshot_datetime(product: dict, key: str) -> datetime | None:
+    value = product.get(key)
+    if not value:
+        return None
+    parsed = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+    return _utc_naive(parsed)
+
+
+def backfill_lifecycle_events_from_raw_data(session: Session) -> int:
+    """Backfill deterministic schedule-change events from stored raw snapshots."""
+    snapshots = session.query(LandingPageRawData).order_by(
+        LandingPageRawData.scraped_date,
+        LandingPageRawData.id,
+    ).all()
+    previous_products: dict[str, dict] = {}
+    bundle_rows = {
+        bundle.machine_name: bundle
+        for bundle in session.query(Bundle).all()
+    }
+    created = 0
+
+    for snapshot in snapshots:
+        payload = snapshot.json_data
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+        current_products = _extract_snapshot_products(payload)
+        for machine_name, product in current_products.items():
+            previous = previous_products.get(machine_name)
+            if previous is None:
+                continue
+            previous_start_at = _snapshot_datetime(previous, 'start_date|datetime')
+            previous_end_at = _snapshot_datetime(previous, 'end_date|datetime')
+            new_start_at = _snapshot_datetime(product, 'start_date|datetime')
+            new_end_at = _snapshot_datetime(product, 'end_date|datetime')
+            event_type = _classify_schedule_change(
+                previous_start_at,
+                previous_end_at,
+                new_start_at,
+                new_end_at,
+            )
+            if event_type is None:
+                continue
+            bundle = bundle_rows.get(machine_name)
+            if _add_lifecycle_event(
+                session,
+                machine_name=machine_name,
+                bundle_id=bundle.id if bundle else None,
+                bundle_title=product.get('tile_name') or product.get('tile_short_name'),
+                event_type=event_type,
+                observed_at=snapshot.scraped_date,
+                previous_start_at=previous_start_at,
+                previous_end_at=previous_end_at,
+                new_start_at=new_start_at,
+                new_end_at=new_end_at,
+                source_snapshot_id=snapshot.id,
+            ):
+                created += 1
+        previous_products.update(current_products)
+
+    session.commit()
+    logger.info('Backfilled %s bundle lifecycle events', created)
+    return created
 
 
 def ensure_landing_page_raw_data_table(engine) -> None:
@@ -152,6 +381,7 @@ def persist_bundles(
     records: Iterable[BundleRecord],
     session: Session,
     now: datetime | None = None,
+    source_snapshot_id: str | None = None,
 ) -> None:
     """
     Persiste los bundles en la base de datos SQLite.
@@ -173,6 +403,13 @@ def persist_bundles(
             # Buscar si ya existe un bundle con el mismo machine_name
             existing = session.query(Bundle).filter(Bundle.machine_name == payload['machine_name']).first()
             if existing:
+                _track_existing_bundle_change(
+                    session,
+                    existing,
+                    payload,
+                    current_time,
+                    source_snapshot_id=source_snapshot_id,
+                )
                 # Actualizar el bundle existente
                 for key, value in payload.items():
                     if key != 'id':  # No actualizar el ID
@@ -205,7 +442,10 @@ def persist_bundles(
             raise RuntimeError(f'Error guardando bundles: {exc}') from exc
 
 
-def persist_landing_page_raw_data(record: LandingPageRawDataRecord, session: Session) -> None:
+def persist_landing_page_raw_data(
+    record: LandingPageRawDataRecord,
+    session: Session,
+) -> LandingPageRawData:
     """
     Persiste el raw data de landingPage-json-data en la base de datos.
     
@@ -225,6 +465,7 @@ def persist_landing_page_raw_data(record: LandingPageRawDataRecord, session: Ses
         session.add(landing_page_raw_data)
         session.commit()
         logger.info('Raw data de landingPage guardado exitosamente')
+        return landing_page_raw_data
     except SQLAlchemyError as exc:
         session.rollback()
         raise RuntimeError(f'Error guardando raw data de landingPage: {exc}') from exc
@@ -276,4 +517,5 @@ def recreate_database(settings: Settings, drop_existing: bool = True) -> None:
     Base.metadata.create_all(engine, checkfirst=True)
     ensure_columns(engine)
     ensure_landing_page_raw_data_table(engine)
+    ensure_bundle_lifecycle_event_table(engine)
     logger.info('Base de datos recreada exitosamente')

@@ -32,17 +32,22 @@ def main() -> None:
 
     SessionFactory = get_session_factory(settings)
     with SessionFactory() as session:
-        print('Limpiando bundles expirados...')
-        remove_outdated_bundles(session)
-        print('Persistiendo bundles...')
-        persist_bundles(records, session)
-        
-        # Guardar raw data de landingPage
+        raw_data = None
         raw_data_record = spider.get_raw_data_record()
         if raw_data_record:
             print('Persistiendo raw data de landingPage...')
-            persist_landing_page_raw_data(raw_data_record, session)
-        
+            raw_data = persist_landing_page_raw_data(raw_data_record, session)
+
+        print('Limpiando bundles expirados...')
+        remove_outdated_bundles(session, now=raw_data_record.scraped_date if raw_data_record else None)
+        print('Persistiendo bundles...')
+        persist_bundles(
+            records,
+            session,
+            now=raw_data_record.scraped_date if raw_data_record else None,
+            source_snapshot_id=raw_data.id if raw_data else None,
+        )
+
         print('¡Proceso completado exitosamente!')
 
 
