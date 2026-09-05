@@ -61,7 +61,7 @@ export default {
   },
   inactiveBundles: {
     title: 'Bundles Inactivos',
-    description: 'Explora bundles inactivos y cambios históricos de calendario.',
+    description: 'Explora bundles inactivos y cambios históricos de calendario que ya terminaron.',
     loading: 'Cargando bundles inactivos...',
     refresh: 'Actualizar',
     count: 'registros históricos',

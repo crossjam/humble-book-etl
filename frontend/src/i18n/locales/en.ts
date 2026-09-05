@@ -61,7 +61,7 @@ export default {
   },
   inactiveBundles: {
     title: 'Inactive Bundles',
-    description: 'Browse inactive bundles and historical schedule changes.',
+    description: 'Browse inactive bundles and historical schedule changes that have ended.',
     loading: 'Loading inactive bundles...',
     refresh: 'Refresh',
     count: 'history records',

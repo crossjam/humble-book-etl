@@ -447,16 +447,28 @@ async def list_bundle_history(
     offset: Annotated[int, Query(ge=0)] = 0,
     db: AsyncSession = Depends(get_async_db),
 ):
-    """Return inactive bundle rows and lifecycle events in one history view."""
+    """Return closed inactive bundle rows and lifecycle events in one history view."""
+    now_db = datetime.now(timezone.utc).replace(tzinfo=None)
     inactive_result = await db.execute(
-        select(Bundle).where(or_(
-            Bundle.is_active.is_(False),
-            Bundle.archived_at.is_not(None),
-        ))
+        select(Bundle).where(
+            and_(
+                or_(
+                    Bundle.is_active.is_(False),
+                    Bundle.archived_at.is_not(None),
+                ),
+                or_(
+                    Bundle.end_date_datetime.is_(None),
+                    Bundle.end_date_datetime <= now_db,
+                ),
+            )
+        )
     )
     inactive_bundles = inactive_result.scalars().all()
 
-    event_statement = select(BundleLifecycleEvent)
+    event_statement = select(BundleLifecycleEvent).where(or_(
+        BundleLifecycleEvent.new_end_at.is_(None),
+        BundleLifecycleEvent.new_end_at <= now_db,
+    ))
     if event_type is not None:
         event_statement = event_statement.where(
             BundleLifecycleEvent.event_type == event_type

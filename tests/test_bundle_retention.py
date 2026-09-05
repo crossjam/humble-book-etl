@@ -796,7 +796,7 @@ def test_unified_bundle_history_includes_event_only_and_inactive_rows(engine):
                 event_type='extended',
                 observed_at=now,
                 previous_end_at=now - timedelta(days=1),
-                new_end_at=now + timedelta(days=3),
+                new_end_at=now - timedelta(hours=1),
             ),
         ])
         session.commit()
@@ -813,6 +813,43 @@ def test_unified_bundle_history_includes_event_only_and_inactive_rows(engine):
     history = asyncio.run(exercise())
     assert {item['record_type'] for item in history} == {'inactive_bundle', 'lifecycle_event'}
     assert {item['machine_name'] for item in history} == {'inactive-one', 'historical-only'}
+
+
+def test_unified_bundle_history_excludes_future_end_dates(engine):
+    now = datetime(2026, 9, 5, 12, 0)
+    with Session(engine) as session:
+        session.add_all([
+            Bundle(
+                id='future-active',
+                machine_name='future-active',
+                tile_name='Still active bundle',
+                is_active=True,
+                end_date_datetime=now + timedelta(days=2),
+                verification_date=now,
+            ),
+            BundleLifecycleEvent(
+                id='future-event',
+                event_key='future-history-event',
+                machine_name='future-only',
+                bundle_title='Future extension',
+                event_type='extended',
+                observed_at=now,
+                previous_end_at=now - timedelta(days=1),
+                new_end_at=now + timedelta(days=2),
+            ),
+        ])
+        session.commit()
+
+    async def exercise():
+        async_engine = create_async_engine(f'sqlite+aiosqlite:///{engine.url.database}')
+        try:
+            async with async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)() as session:
+                return await list_bundle_history(limit=100, offset=0, db=session)
+        finally:
+            await async_engine.dispose()
+
+    history = asyncio.run(exercise())
+    assert all(item['machine_name'] not in {'future-active', 'future-only'} for item in history)
 
 
 def test_lifecycle_events_are_available_over_http(engine):
