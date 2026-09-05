@@ -57,6 +57,7 @@
               <li><code>{{ $t('app.endpoints.featured') }}</code></li>
               <li><code>{{ $t('app.endpoints.etl') }}</code></li>
               <li><code>{{ $t('app.endpoints.rawData') }}</code></li>
+              <li><code>{{ $t('app.endpoints.lifecycleEvents') }}</code></li>
             </ul>
           </div>
         </div>
@@ -100,6 +101,13 @@
         </button>
         <button
           class="tab-button"
+          :class="{ active: activeTab === 'extended' }"
+          @click="activeTab = 'extended'"
+        >
+          {{ $t('app.tabs.extendedBundles') }}
+        </button>
+        <button
+          class="tab-button"
           :class="{ active: activeTab === 'tests' }"
           @click="activeTab = 'tests'"
         >
@@ -117,6 +125,10 @@
 
       <div v-show="activeTab === 'inactive'" class="tab-content">
         <InactiveBundlesSection />
+      </div>
+
+      <div v-show="activeTab === 'extended'" class="tab-content">
+        <ExtendedBundlesSection />
       </div>
 
       <div v-show="activeTab === 'tests'" class="tab-content">
@@ -139,6 +151,7 @@ import MobileMain from "@components/main/MobileMain.vue";
 import TestsSection from "@components/sections/TestsSection.vue";
 import UtilitiesSection from "@components/sections/UtilitiesSection.vue";
 import InactiveBundlesSection from "@components/sections/InactiveBundlesSection.vue";
+import ExtendedBundlesSection from "@components/sections/ExtendedBundlesSection.vue";
 
 import { useResponsiveQueryEvent } from "@composables/useResponsiveQueryEvent";
 import { useBundles } from "@composables/useBundles";
@@ -152,7 +165,7 @@ const { isMobile } = useResponsiveQueryEvent();
 const { bundles, featured, activeBundles, loading, error, lastUpdate, etlResult, runETL } =
   useBundles();
 
-const activeTab = ref<"bundles" | "tests" | "inactive">("bundles");
+const activeTab = ref<"bundles" | "inactive" | "extended" | "tests">("bundles");
 
 const formatDate = (date: Date) => {
   const dateLocale = locale.value === "es" ? "es-ES" : "en-US";

@@ -37,6 +37,7 @@ export default {
       featured: 'GET /bundles/featured - Bundle destacado',
       etl: 'POST /etl/run - Ejecutar pipeline ETL',
       rawData: 'GET /landing-page-raw-data - Registros de datos raw',
+      lifecycleEvents: 'GET /bundle-lifecycle-events - Cambios de calendario',
     },
     stats: {
       totalBundles: 'bundles totales',
@@ -55,6 +56,7 @@ export default {
       activeBundles: 'Bundles Activos',
       testsAndUtilities: 'Tests y Utilidades',
       inactiveBundles: 'Bundles Inactivos',
+      extendedBundles: 'Bundles Extendidos',
     },
   },
   inactiveBundles: {
@@ -64,6 +66,18 @@ export default {
     refresh: 'Actualizar',
     count: 'bundles inactivos',
     empty: 'No se encontraron bundles inactivos.',
+  },
+  extendedBundles: {
+    title: 'Bundles Extendidos',
+    description: 'Bundles cuya fecha de finalización fue retrasada en una observación posterior del ETL.',
+    loading: 'Cargando bundles extendidos...',
+    refresh: 'Actualizar',
+    count: 'extensiones registradas',
+    empty: 'No hay bundles extendidos registrados.',
+    badge: 'Extendido',
+    previousEnd: 'Fin anterior',
+    newEnd: 'Nuevo fin',
+    observed: 'Observado',
   },
   featured: {
     eyebrow: 'Destacado',
