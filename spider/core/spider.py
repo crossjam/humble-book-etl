@@ -5,10 +5,10 @@ import json
 import logging
 from typing import Dict, List, Optional
 
+import httpx
 import pandas as pd
 from bs4 import BeautifulSoup
 from pydantic import ValidationError
-from requests import Session, exceptions
 
 from ..scrapers.bundle_detail_scraper import BundleDetailScraper
 from ..schemas.bundle import BundleRecord
@@ -49,16 +49,32 @@ class HumbleSpider:
         'tile_logo',
     )
 
-    def __init__(self, session: Session | None = None) -> None:
+    def __init__(self, session: httpx.Client | None = None) -> None:
         """
         Inicializa el spider de Humble Bundle.
 
         Args:
-            session: Sesión de requests a usar. Si es None, se crea una nueva.
+            session: Cliente HTTPX reutilizable. Si es None, se crea un cliente
+                con HTTP/2 habilitado.
         """
-        self.session = session or Session()
+        self._owns_session = session is None
+        self.session = session or httpx.Client(
+            http2=True,
+            follow_redirects=True,
+            timeout=30.0,
+        )
         self.detail_scraper = BundleDetailScraper(self.session)
         self._last_raw_payload: Optional[Dict] = None
+
+    def close(self) -> None:
+        if self._owns_session:
+            self.session.close()
+
+    def __enter__(self) -> 'HumbleSpider':
+        return self
+
+    def __exit__(self, *_args) -> None:
+        self.close()
 
     def fetch_bundles(self) -> List[BundleRecord]:
         """
@@ -122,7 +138,7 @@ class HumbleSpider:
         try:
             response = self.session.get(self.URL, timeout=30)
             response.raise_for_status()
-        except exceptions.RequestException as exc:
+        except httpx.HTTPError as exc:
             logger.exception('Error consultando %s', self.URL)
             raise HumbleSpiderError(
                 'No se pudo obtener la página de Humble Bundle') from exc

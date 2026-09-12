@@ -39,7 +39,7 @@ Evidence in the project:
 - SQLAlchemy 2
 - PostgreSQL 16 through Docker Compose for production
 - SQLite + aiosqlite for optional local development
-- Requests + BeautifulSoup4 for scraping
+- HTTPX with HTTP/2 + BeautifulSoup4 for scraping
 - pandas + Pydantic + pydantic-settings for normalization and configuration
 - JWT with `python-jose`
 - Password hashing with `bcrypt(SHA-256(password))`

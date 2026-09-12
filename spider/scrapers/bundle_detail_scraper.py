@@ -5,8 +5,8 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+import httpx
 from bs4 import BeautifulSoup
-from requests import Session, exceptions
 
 logger = logging.getLogger(__name__)
 
@@ -27,14 +27,30 @@ class BundleDetailScraper:
     """
     BASE_URL = 'https://www.humblebundle.com'
 
-    def __init__(self, session: Session | None = None) -> None:
+    def __init__(self, session: httpx.Client | None = None) -> None:
         """
         Inicializa el scraper de detalles de bundles.
-        
+
         Args:
-            session: Sesión de requests a usar. Si es None, se crea una nueva.
+            session: Cliente HTTPX reutilizable. Si es None, se crea un cliente
+                con HTTP/2 habilitado.
         """
-        self.session = session or Session()
+        self._owns_session = session is None
+        self.session = session or httpx.Client(
+            http2=True,
+            follow_redirects=True,
+            timeout=30.0,
+        )
+
+    def close(self) -> None:
+        if self._owns_session:
+            self.session.close()
+
+    def __enter__(self) -> 'BundleDetailScraper':
+        return self
+
+    def __exit__(self, *_args) -> None:
+        self.close()
 
     def fetch_bundle_details(self, product_path: str | None) -> Optional[BundleDetails]:
         """
@@ -54,9 +70,9 @@ class BundleDetailScraper:
         
         url = product_path if product_path.startswith('http') else f'{self.BASE_URL}{product_path}'
         try:
-            response = self.session.get(url, timeout=30)
+            response = self.session.get(url)
             response.raise_for_status()
-        except exceptions.RequestException as exc:
+        except httpx.HTTPError as exc:
             logger.warning('No se pudo obtener detalle del bundle %s: %s', product_path, exc)
             return None
 

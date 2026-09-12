@@ -21,19 +21,18 @@ def main() -> None:
         SystemExit: Si ocurre un error al ejecutar el spider.
     """
     settings = get_settings()
-    spider = HumbleSpider()
-    
     try:
-        print('Iniciando HumbleSpider...')
-        records = spider.fetch_bundles()
-        print(f'Bundles obtenidos: {len(records)}')
+        with HumbleSpider() as spider:
+            print('Iniciando HumbleSpider...')
+            records = spider.fetch_bundles()
+            raw_data_record = spider.get_raw_data_record()
+            print(f'Bundles obtenidos: {len(records)}')
     except HumbleSpiderError as exc:
         raise SystemExit(f'Error ejecutando el spider: {exc}') from exc
 
     SessionFactory = get_session_factory(settings)
     with SessionFactory() as session:
         raw_data = None
-        raw_data_record = spider.get_raw_data_record()
         if raw_data_record:
             print('Persistiendo raw data de landingPage...')
             raw_data = persist_landing_page_raw_data(raw_data_record, session)

@@ -26,7 +26,7 @@ export default {
       title: 'Stack Tecnológico',
       backend: 'Backend: Python 3.13, FastAPI, SQLAlchemy, SQLite',
       frontend: 'Frontend: Vue 3, Vite, TypeScript',
-      scraping: 'Scraping: BeautifulSoup4, Requests, Pandas',
+      scraping: 'Scraping: BeautifulSoup4, HTTPX con HTTP/2, Pandas',
     },
     endpoints: {
       title: 'Endpoints de la API',

@@ -1,8 +1,41 @@
+import json
+
+import httpx
+
 from spider.scrapers.bundle_detail_scraper import BundleDetailScraper
 
 
+def test_fetch_bundle_details_accepts_an_httpx_client():
+    payload = {
+        'bundleData': {
+            'tier_pricing_data': {},
+            'tier_display_data': {},
+            'tier_item_data': {
+                'book-one': {'human_name': 'Book One'},
+            },
+            'basic_data': {'msrp|money': {'amount': 10}},
+        }
+    }
+    html = (
+        '<script id="webpack-bundle-page-data" type="application/json">'
+        f'{json.dumps(payload)}'
+        '</script>'
+    )
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == '/books/example'
+        return httpx.Response(200, text=html)
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        scraper = BundleDetailScraper(client)
+        details = scraper.fetch_bundle_details('/books/example')
+
+    assert details is not None
+    assert details.book_list[0]['title'] == 'Book One'
+    assert details.msrp_total == 10.0
+
+
 def test_extract_book_list_includes_detail_panel_metadata():
-    scraper = BundleDetailScraper()
     tier_items = {
         'singularity_imagecomics': {
             'human_name': 'SINGULARITY',
@@ -36,7 +69,8 @@ def test_extract_book_list_includes_detail_panel_metadata():
         'bt25': {'tier_item_machine_names': ['singularity_imagecomics']},
     }
 
-    books = scraper._extract_book_list(tier_items, display)
+    with BundleDetailScraper() as scraper:
+        books = scraper._extract_book_list(tier_items, display)
 
     assert books == [
         {
@@ -61,12 +95,11 @@ def test_extract_book_list_includes_detail_panel_metadata():
 
 
 def test_extract_book_list_uses_empty_detail_collections_when_absent():
-    scraper = BundleDetailScraper()
-
-    books = scraper._extract_book_list(
-        {'book-one': {'human_name': 'Book One'}},
-        {},
-    )
+    with BundleDetailScraper() as scraper:
+        books = scraper._extract_book_list(
+            {'book-one': {'human_name': 'Book One'}},
+            {},
+        )
 
     assert books[0]['authors'] == []
     assert books[0]['publishers'] == []

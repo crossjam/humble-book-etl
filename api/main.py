@@ -580,15 +580,15 @@ def trigger_etl(
     current_user: User = Depends(get_current_user),
 ):
     """Executes the ETL: downloads bundles and saves to the database."""
-    spider = HumbleSpider()
     try:
-        records = spider.fetch_bundles()
+        with HumbleSpider() as spider:
+            records = spider.fetch_bundles()
+            raw_data_record = spider.get_raw_data_record()
     except HumbleSpiderError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
     raw_data = None
-    raw_data_record = spider.get_raw_data_record()
     if raw_data_record:
         raw_data = persist_landing_page_raw_data(raw_data_record, db)
 

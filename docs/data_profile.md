@@ -2,7 +2,7 @@
 
 ## Source
 - Endpoint: `https://www.humblebundle.com/books`
-- Method: downloads via `HumbleSpider` (`requests + BeautifulSoup`).
+- Method: downloads via `HumbleSpider` (`HTTPX with HTTP/2 + BeautifulSoup`).
 - Sampling date: `2025-11-20T02:52:44-05:00`
 
 ## Dataset Summary
