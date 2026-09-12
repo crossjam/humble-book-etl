@@ -15,7 +15,7 @@
 - Columns with optional/missing values: `marketing_blurb`, `hover_title`, `supports_partners`, `hero_highlights`, `hover_highlights`, `author`, `tile_logo`, etc.
 - Bundle-enriched data (from `webpack-bundle-page-data` script):
   - `price_tiers`: list of tiers with header, price and associated machine_names.
-  - `book_list`: detail per book/comic (name, MSRP, image, tiers it belongs to).
+  - `book_list`: detail per book/comic (Humble machine name, title, authors/creators, publishers, description, formats, images, MSRP, preview metadata, and tier membership).
   - `featured_image` (bundle logo) and `msrp_total` (officially communicated sum).
 
 ## Relevant Findings

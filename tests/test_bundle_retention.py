@@ -816,7 +816,7 @@ def test_unified_bundle_history_includes_event_only_and_inactive_rows(engine):
 
 
 def test_unified_bundle_history_excludes_future_end_dates(engine):
-    now = datetime(2026, 9, 5, 12, 0)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     with Session(engine) as session:
         session.add_all([
             Bundle(

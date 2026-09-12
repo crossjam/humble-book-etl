@@ -9,13 +9,23 @@ export interface PriceTier {
   items?: string[];
 }
 
+export interface BookPublisher {
+  name?: string | null;
+  url?: string | null;
+}
+
 export interface BookItem {
   machine_name: string;
   title?: string;
+  authors?: string[];
+  publishers?: BookPublisher[];
+  description?: string | null;
   msrp?: number | null;
   preview?: Record<string, unknown> | null;
   image?: string | null;
+  detail_image?: string | null;
   content_type?: string | null;
+  formats?: string[];
   tiers?: string[];
 }
 

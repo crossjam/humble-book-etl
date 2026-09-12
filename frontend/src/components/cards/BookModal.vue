@@ -33,6 +33,9 @@
                 <div class="book-icon">📖</div>
                 <div class="book-details">
                   <h4 class="book-title">{{ book.title || book.machine_name }}</h4>
+                  <p v-if="book.authors?.length" class="book-authors">
+                    {{ book.authors.join(', ') }}
+                  </p>
                   <p class="book-machine-name">{{ book.machine_name }}</p>
                 </div>
               </div>
@@ -44,6 +47,14 @@
               v-show="expandedBooks.has(book.machine_name)"
               class="book-expanded-info"
             >
+              <img
+                v-if="book.detail_image || book.image"
+                :src="book.detail_image || book.image || ''"
+                :alt="book.title || book.machine_name"
+                class="book-detail-image"
+                loading="lazy"
+                @error="handleImageError"
+              />
               <div class="book-info-grid">
                 <div class="info-item" v-if="book.machine_name">
                   <span class="info-label">{{ $t('bookModal.machineName') }}:</span>
@@ -52,6 +63,24 @@
                 <div class="info-item" v-if="book.title">
                   <span class="info-label">{{ $t('bookModal.title') }}:</span>
                   <span class="info-value">{{ book.title }}</span>
+                </div>
+                <div class="info-item" v-if="book.authors && book.authors.length > 0">
+                  <span class="info-label">{{ $t('bookModal.authors') }}:</span>
+                  <span class="info-value">{{ book.authors.join(', ') }}</span>
+                </div>
+                <div class="info-item" v-if="book.publishers && book.publishers.length > 0">
+                  <span class="info-label">{{ $t('bookModal.publishers') }}:</span>
+                  <span class="info-value">
+                    {{ book.publishers.map((publisher) => publisher.name || publisher.url).filter(Boolean).join(', ') }}
+                  </span>
+                </div>
+                <div class="info-item" v-if="book.formats && book.formats.length > 0">
+                  <span class="info-label">{{ $t('bookModal.formats') }}:</span>
+                  <span class="info-value">{{ book.formats.join(', ').toUpperCase() }}</span>
+                </div>
+                <div class="info-item full-width" v-if="book.description">
+                  <span class="info-label">{{ $t('bookModal.description') }}:</span>
+                  <span class="info-value book-description">{{ book.description }}</span>
                 </div>
                 <div class="info-item" v-if="book.msrp !== null && book.msrp !== undefined">
                   <span class="info-label">{{ $t('bookModal.msrp') }}:</span>
@@ -328,11 +357,16 @@ const handleOverlayClick = (event: MouseEvent) => {
   gap: 4px;
 }
 
+.book-authors,
 .book-machine-name {
   font-size: 0.85rem;
   color: var(--muted);
   margin: 0;
   word-wrap: break-word;
+}
+
+.book-authors {
+  color: var(--text);
 }
 
 @media (max-width: 600px) {
@@ -402,6 +436,16 @@ const handleOverlayClick = (event: MouseEvent) => {
   animation: slideDown 0.3s ease;
 }
 
+.book-detail-image {
+  display: block;
+  width: 100%;
+  max-height: 320px;
+  margin-bottom: 16px;
+  object-fit: contain;
+  border-radius: 8px;
+  background: var(--surface);
+}
+
 .book-info-grid {
   display: flex;
   flex-direction: column;
@@ -426,6 +470,11 @@ const handleOverlayClick = (event: MouseEvent) => {
   font-size: 0.95rem;
   color: var(--text);
   word-wrap: break-word;
+}
+
+.book-description {
+  line-height: 1.55;
+  white-space: pre-line;
 }
 
 .no-books {
