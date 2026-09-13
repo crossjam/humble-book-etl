@@ -37,31 +37,6 @@
           </template>
         </div>
         
-        <div class="project-info">
-          <div class="tech-stack">
-            <h3>{{ $t('app.techStack.title') }}</h3>
-            <ul>
-              <li>{{ $t('app.techStack.backend') }}</li>
-              <li>{{ $t('app.techStack.frontend') }}</li>
-              <li>{{ $t('app.techStack.scraping') }}</li>
-            </ul>
-          </div>
-          
-          <div class="endpoints">
-            <h3>{{ $t('app.endpoints.title') }}</h3>
-            <ul>
-              <li><code>{{ $t('app.endpoints.health') }}</code></li>
-              <li><code>{{ $t('app.endpoints.bundles') }}</code></li>
-              <li><code>{{ $t('app.endpoints.bundleById') }}</code></li>
-              <li><code>{{ $t('app.endpoints.bundleByName') }}</code></li>
-              <li><code>{{ $t('app.endpoints.featured') }}</code></li>
-              <li><code>{{ $t('app.endpoints.etl') }}</code></li>
-              <li><code>{{ $t('app.endpoints.rawData') }}</code></li>
-              <li><code>{{ $t('app.endpoints.lifecycleEvents') }}</code></li>
-            </ul>
-          </div>
-        </div>
-        
         <div class="stats" v-show="!loading">
           <span><strong>{{ bundles.length }}</strong> {{ $t('app.stats.totalBundles') }}</span>
           <span><strong>{{ activeBundles.length }}</strong> {{ $t('app.stats.active') }}</span>
@@ -134,6 +109,33 @@
       <div v-show="activeTab === 'tests'" class="tab-content">
         <TestsSection />
         <UtilitiesSection />
+      </div>
+    </section>
+
+    <section class="project-info-footer" :aria-label="$t('app.techStack.title')">
+      <div class="project-info">
+        <div class="tech-stack">
+          <h3>{{ $t('app.techStack.title') }}</h3>
+          <ul>
+            <li>{{ $t('app.techStack.backend') }}</li>
+            <li>{{ $t('app.techStack.frontend') }}</li>
+            <li>{{ $t('app.techStack.scraping') }}</li>
+          </ul>
+        </div>
+
+        <div class="endpoints">
+          <h3>{{ $t('app.endpoints.title') }}</h3>
+          <ul>
+            <li><code>{{ $t('app.endpoints.health') }}</code></li>
+            <li><code>{{ $t('app.endpoints.bundles') }}</code></li>
+            <li><code>{{ $t('app.endpoints.bundleById') }}</code></li>
+            <li><code>{{ $t('app.endpoints.bundleByName') }}</code></li>
+            <li><code>{{ $t('app.endpoints.featured') }}</code></li>
+            <li><code>{{ $t('app.endpoints.etl') }}</code></li>
+            <li><code>{{ $t('app.endpoints.rawData') }}</code></li>
+            <li><code>{{ $t('app.endpoints.lifecycleEvents') }}</code></li>
+          </ul>
+        </div>
       </div>
     </section>
   </div>
@@ -279,49 +281,6 @@ const handleLogout = () => {
       }
     }
 
-    .project-info {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-      gap: 20px;
-      margin-bottom: 20px;
-      padding: 16px;
-      background: var(--surface);
-      border-radius: 12px;
-      border: 1px solid var(--border);
-
-      h3 {
-        margin: 0 0 12px 0;
-        font-size: 1rem;
-        color: var(--accent);
-        font-weight: 600;
-      }
-
-      ul {
-        margin: 0;
-        padding-left: 20px;
-        list-style: disc;
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-        font-size: 0.85rem;
-        color: var(--text);
-
-        li {
-          line-height: 1.5;
-
-          code {
-            background: var(--bg);
-            padding: 2px 6px;
-            border-radius: 4px;
-            font-family: Menlo, Monaco, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-            font-size: 0.8rem;
-            color: var(--primary);
-            border: 1px solid var(--border);
-          }
-        }
-      }
-    }
-
     .stats {
       display: flex;
       gap: 16px;
@@ -403,8 +362,52 @@ const handleLogout = () => {
   }
 }
 
-.tabs-container {
-  margin-top: 32px;
+.project-info-footer {
+  padding: 32px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.project-info {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 20px;
+  padding: 16px;
+  background: var(--surface);
+  border-radius: 12px;
+  border: 1px solid var(--border);
+
+  h3 {
+    margin: 0 0 12px 0;
+    font-size: 1rem;
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  ul {
+    margin: 0;
+    padding-left: 20px;
+    list-style: disc;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-size: 0.85rem;
+    color: var(--text);
+
+    li {
+      line-height: 1.5;
+
+      code {
+        background: var(--bg);
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-family: Menlo, Monaco, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+        font-size: 0.8rem;
+        color: var(--primary);
+        border: 1px solid var(--border);
+      }
+    }
+  }
 }
 
 .tabs-nav {
@@ -456,6 +459,10 @@ const handleLogout = () => {
 
 @media (max-width: 768px) {
   .intro {
+    padding: 16px;
+  }
+
+  .project-info-footer {
     padding: 16px;
   }
 
