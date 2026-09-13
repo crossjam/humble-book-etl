@@ -155,7 +155,7 @@ app = FastAPI(
 @app.get('/docs', include_in_schema=False, response_class=HTMLResponse)
 async def swagger_ui_html() -> HTMLResponse:
     return get_swagger_ui_html(
-        openapi_url='/openapi.json',
+        openapi_url='openapi.json',
         title=f'{app.title} - Swagger UI',
         oauth2_redirect_url='/docs/oauth2-redirect',
         swagger_js_url='https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js',
@@ -171,7 +171,7 @@ async def swagger_ui_redirect() -> HTMLResponse:
 @app.get('/redoc', include_in_schema=False, response_class=HTMLResponse)
 async def redoc() -> HTMLResponse:
     return get_redoc_html(
-        openapi_url='/openapi.json',
+        openapi_url='openapi.json',
         title=f'{app.title} - ReDoc',
         redoc_js_url='https://cdn.jsdelivr.net/npm/redoc@latest/bundles/redoc.standalone.js',
     )
