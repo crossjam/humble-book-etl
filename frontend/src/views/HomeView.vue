@@ -120,6 +120,16 @@
             <li>{{ $t('app.techStack.backend') }}</li>
             <li>{{ $t('app.techStack.frontend') }}</li>
             <li>{{ $t('app.techStack.scraping') }}</li>
+            <li>
+              <a
+                class="api-docs-link"
+                href="/api/docs"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {{ $t('app.techStack.openapi') }}
+              </a>
+            </li>
           </ul>
         </div>
 
@@ -396,6 +406,17 @@ const handleLogout = () => {
 
     li {
       line-height: 1.5;
+
+      a.api-docs-link {
+        color: var(--primary);
+        font-weight: 600;
+        text-decoration: none;
+
+        &:hover {
+          color: var(--accent);
+          text-decoration: underline;
+        }
+      }
 
       code {
         background: var(--bg);

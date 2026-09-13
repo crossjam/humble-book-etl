@@ -27,6 +27,7 @@ export default {
       backend: 'Backend: Python 3.13, FastAPI, SQLAlchemy, SQLite',
       frontend: 'Frontend: Vue 3, Vite, TypeScript',
       scraping: 'Scraping: BeautifulSoup4, HTTPX con HTTP/2, Pandas',
+      openapi: 'OpenAPI / Swagger UI',
     },
     endpoints: {
       title: 'Endpoints de la API',
