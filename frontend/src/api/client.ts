@@ -1,17 +1,17 @@
 import axios, { AxiosError } from "axios";
 import type { LoginPayload, TokenResponse } from "@/types/auth";
 
-const baseURL =
+export const apiBaseURL =
 	import.meta.env.VITE_API_BASE_URL?.toString() ?? "/humblebundlespider/api";
 
 export const api = axios.create({
-	baseURL,
+	baseURL: apiBaseURL,
 	timeout: 10000,
 });
 
 // Cliente con timeout extendido para operaciones largas como ETL
 export const apiLong = axios.create({
-	baseURL,
+	baseURL: apiBaseURL,
 	timeout: 300000, // 5 minutos para operaciones largas como ETL
 });
 

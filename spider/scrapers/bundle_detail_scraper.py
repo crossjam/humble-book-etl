@@ -5,43 +5,59 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+import httpx
 from bs4 import BeautifulSoup
-from requests import Session, exceptions
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class BundleDetails:
-    """Detalles de un bundle extraídos del JSON, sin imágenes."""
+    """Detalles extraídos del JSON de una página de bundle."""
     price_tiers: List[Dict[str, Any]]
-    book_list: List[Dict[str, Any]]  # Sin campo 'image'
+    book_list: List[Dict[str, Any]]
     msrp_total: Optional[float]
     raw_html: Optional[str] = None  # HTML raw del bundle
 
 
 class BundleDetailScraper:
     """
-    Scraper que extrae detalles de bundles desde el JSON embebido en la página.
-    Solo extrae datos del JSON (price_tiers, book_list, msrp_total), NO extrae imágenes.
+    Extrae tiers y metadatos detallados de cada título desde el JSON embebido
+    en la página del bundle.
     """
     BASE_URL = 'https://www.humblebundle.com'
 
-    def __init__(self, session: Session | None = None) -> None:
+    def __init__(self, session: httpx.Client | None = None) -> None:
         """
         Inicializa el scraper de detalles de bundles.
-        
+
         Args:
-            session: Sesión de requests a usar. Si es None, se crea una nueva.
+            session: Cliente HTTPX reutilizable. Si es None, se crea un cliente
+                con HTTP/2 habilitado.
         """
-        self.session = session or Session()
+        self._owns_session = session is None
+        self.session = session or httpx.Client(
+            http2=True,
+            follow_redirects=True,
+            timeout=30.0,
+        )
+
+    def close(self) -> None:
+        if self._owns_session:
+            self.session.close()
+
+    def __enter__(self) -> 'BundleDetailScraper':
+        return self
+
+    def __exit__(self, *_args) -> None:
+        self.close()
 
     def fetch_bundle_details(self, product_path: str | None) -> Optional[BundleDetails]:
         """
         Obtiene los detalles de un bundle desde su página.
         
         Extrae información del JSON embebido (webpack-bundle-page-data) sobre
-        precios, lista de libros y MSRP total. NO extrae imágenes.
+        precios, títulos, autores, editoriales, formatos, descripciones y MSRP.
         
         Args:
             product_path: Ruta o URL del producto. Puede ser relativa o absoluta.
@@ -54,9 +70,9 @@ class BundleDetailScraper:
         
         url = product_path if product_path.startswith('http') else f'{self.BASE_URL}{product_path}'
         try:
-            response = self.session.get(url, timeout=30)
+            response = self.session.get(url)
             response.raise_for_status()
-        except exceptions.RequestException as exc:
+        except httpx.HTTPError as exc:
             logger.warning('No se pudo obtener detalle del bundle %s: %s', product_path, exc)
             return None
 
@@ -123,16 +139,14 @@ class BundleDetailScraper:
         """
         Extrae la lista de libros del bundle desde los datos del JSON.
         
-        Construye la lista de libros con sus metadatos, precios y tiers.
-        NO incluye imágenes.
+        Construye la lista de libros con sus metadatos, precios, imágenes y tiers.
         
         Args:
             tier_items: Diccionario con información de los items por tier
             display: Diccionario con información de visualización de los tiers
                 
         Returns:
-            Lista de diccionarios, cada uno representando un libro con sus
-            metadatos (machine_name, title, msrp, preview, content_type, tiers).
+            Lista de diccionarios con metadatos detallados por título.
         """
         membership: Dict[str, List[str]] = {}
         for tier_id, data in display.items():
@@ -141,18 +155,77 @@ class BundleDetailScraper:
 
         books: List[Dict[str, Any]] = []
         for machine_name, info in tier_items.items():
+            resolved_paths = info.get('resolved_paths') or {}
+            description_html = info.get('description_text')
             books.append(
                 {
                     'machine_name': machine_name,
                     'title': info.get('human_name'),
+                    'authors': self._extract_people(
+                        info.get('developers'), 'developer-name'
+                    ),
+                    'publishers': self._extract_publishers(info.get('publishers')),
+                    'description': self._plain_text(description_html),
                     'msrp': BundleDetailScraper._safe_amount(info.get('msrp_price')),
                     'preview': info.get('book_preview'),
-                    # NO incluir 'image'
+                    'image': resolved_paths.get('front_page_art_imgix'),
+                    'detail_image': resolved_paths.get('preview_image'),
                     'content_type': info.get('item_content_type'),
+                    'formats': self._extract_formats(info.get('platforms_and_oses')),
                     'tiers': membership.get(machine_name, []),
                 }
             )
         return books
+
+    @staticmethod
+    def _extract_people(
+        entries: Optional[List[Dict[str, Any]]], key: str
+    ) -> List[str]:
+        """Normalize Humble's comma-separated creator display names."""
+        names: List[str] = []
+        for entry in entries or []:
+            value = entry.get(key) if isinstance(entry, dict) else None
+            if not isinstance(value, str):
+                continue
+            for name in value.split(','):
+                normalized = name.strip()
+                if normalized and normalized not in names:
+                    names.append(normalized)
+        return names
+
+    @staticmethod
+    def _extract_publishers(
+        entries: Optional[List[Dict[str, Any]]]
+    ) -> List[Dict[str, Optional[str]]]:
+        publishers: List[Dict[str, Optional[str]]] = []
+        for entry in entries or []:
+            if not isinstance(entry, dict):
+                continue
+            name = entry.get('publisher-name')
+            url = entry.get('publisher-url')
+            if name or url:
+                publishers.append({'name': name, 'url': url})
+        return publishers
+
+    @staticmethod
+    def _extract_formats(platforms: Optional[Dict[str, Any]]) -> List[str]:
+        formats: List[str] = []
+        for platform in (platforms or {}).values():
+            if not isinstance(platform, dict):
+                continue
+            for values in platform.values():
+                if not isinstance(values, list):
+                    continue
+                for value in values:
+                    if isinstance(value, str) and value not in formats:
+                        formats.append(value)
+        return formats
+
+    @staticmethod
+    def _plain_text(value: Any) -> Optional[str]:
+        if not isinstance(value, str) or not value.strip():
+            return None
+        return BeautifulSoup(value, 'html.parser').get_text(' ', strip=True)
 
     @staticmethod
     def _safe_amount(value: Optional[Dict[str, Any]]) -> Optional[float]:

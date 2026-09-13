@@ -168,7 +168,7 @@ Cada evento conserva `machine_name`, el `bundle_id` cuando existe, tipo (`extend
 │         ├─> GET página del bundle                                   │
 │         ├─> Extrae <script id="webpack-bundle-page-data">          │
 │         ├─> Parsea JSON embebido                                   │
-│         ├─> Extrae price_tiers, book_list, msrp_total              │
+│         ├─> Extrae price_tiers, metadatos detallados por título y msrp_total │
 │         ├─> Normaliza tile_logo (si existe)                         │
 │         └─> Guarda raw_html                                         │
 └─────────────────────────────────────────────────────────────────────┘
@@ -230,7 +230,7 @@ Cada evento conserva `machine_name`, el `bundle_id` cuando existe, tipo (`extend
 - `scrapers/bundle_detail_scraper.py`: clase `BundleDetailScraper`.
   - `fetch_bundle_details(product_path)`: descarga la página de un bundle, busca el `<script id="webpack-bundle-page-data">` para leer `bundleData`, arma tiers (`_extract_price_tiers`), libros (`_extract_book_list`), msrp total y guarda `raw_html`.
   - `_extract_price_tiers()`: extrae información de precios por tier desde el JSON.
-  - `_extract_book_list()`: extrae lista de libros con metadatos (machine_name, title, msrp, preview, content_type, tiers). NO incluye imágenes.
+  - `_extract_book_list()`: extrae `machine_name`, título, autores/creadores, editoriales, descripción, formatos, imágenes, MSRP, preview, tipo de contenido y tiers. Los datos provienen de `bundleData.tier_item_data`, el mismo payload que alimenta el panel de detalle abierto por los enlaces `href="#"` de la página.
   - `_safe_amount()`: extrae valores numéricos de objetos de dinero del JSON.
   - Incluye dataclass `BundleDetails` con price_tiers, book_list, msrp_total y raw_html.
 

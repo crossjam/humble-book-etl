@@ -39,7 +39,7 @@ Evidence in the project:
 - SQLAlchemy 2
 - PostgreSQL 16 through Docker Compose for production
 - SQLite + aiosqlite for optional local development
-- Requests + BeautifulSoup4 for scraping
+- HTTPX with HTTP/2 + BeautifulSoup4 for scraping
 - pandas + Pydantic + pydantic-settings for normalization and configuration
 - JWT with `python-jose`
 - Password hashing with `bcrypt(SHA-256(password))`
@@ -174,7 +174,7 @@ Flow:
 3. Normalizes products with pandas.
 4. Converts dates, URLs, JSON lists, and derived metrics.
 5. Visits each bundle page and reads `webpack-bundle-page-data`.
-6. Extracts tiers, books, total MSRP, and raw HTML.
+6. Extracts tiers and detailed per-title metadata (authors/creators, publishers, descriptions, formats, and images), total MSRP, and raw HTML.
 7. Validates records with Pydantic.
 8. Archives expired bundles without deleting their metadata.
 9. Persists append-only lifecycle events when a known bundle is extended, renewed, shortened, or reactivated.

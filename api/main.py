@@ -52,7 +52,7 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 SessionFactory = None
 AsyncSessionFactory = None
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl='/auth/login')
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl='auth/login')
 
 
 def get_async_engine():
@@ -155,7 +155,7 @@ app = FastAPI(
 @app.get('/docs', include_in_schema=False, response_class=HTMLResponse)
 async def swagger_ui_html() -> HTMLResponse:
     return get_swagger_ui_html(
-        openapi_url='/openapi.json',
+        openapi_url='openapi.json',
         title=f'{app.title} - Swagger UI',
         oauth2_redirect_url='/docs/oauth2-redirect',
         swagger_js_url='https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js',
@@ -171,7 +171,7 @@ async def swagger_ui_redirect() -> HTMLResponse:
 @app.get('/redoc', include_in_schema=False, response_class=HTMLResponse)
 async def redoc() -> HTMLResponse:
     return get_redoc_html(
-        openapi_url='/openapi.json',
+        openapi_url='openapi.json',
         title=f'{app.title} - ReDoc',
         redoc_js_url='https://cdn.jsdelivr.net/npm/redoc@latest/bundles/redoc.standalone.js',
     )
@@ -580,15 +580,15 @@ def trigger_etl(
     current_user: User = Depends(get_current_user),
 ):
     """Executes the ETL: downloads bundles and saves to the database."""
-    spider = HumbleSpider()
     try:
-        records = spider.fetch_bundles()
+        with HumbleSpider() as spider:
+            records = spider.fetch_bundles()
+            raw_data_record = spider.get_raw_data_record()
     except HumbleSpiderError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
     raw_data = None
-    raw_data_record = spider.get_raw_data_record()
     if raw_data_record:
         raw_data = persist_landing_page_raw_data(raw_data_record, db)
 
