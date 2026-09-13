@@ -19,6 +19,7 @@ const bundle: Bundle = {
       formats: ["pdf"],
       description: "A sweeping, cosmic story.",
       detail_image: "https://images.example/singularity.jpg",
+      image: "https://images.example/singularity-cover.jpg",
     },
   ],
 };
@@ -36,5 +37,19 @@ describe("BookModal", () => {
     expect(wrapper.get(".book-detail-image").attributes("src")).toBe(
       "https://images.example/singularity.jpg",
     );
+  });
+
+  it("falls back to the cover image when the detail image fails", async () => {
+    const wrapper = mount(BookModal, { props: { bundle } });
+    await wrapper.get(".book-info").trigger("click");
+
+    const image = wrapper.get(".book-detail-image");
+    await image.trigger("error");
+    expect(image.attributes("src")).toBe(
+      "https://images.example/singularity-cover.jpg",
+    );
+
+    await image.trigger("error");
+    expect(image.attributes("style")).toContain("display: none");
   });
 });

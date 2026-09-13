@@ -139,8 +139,7 @@ class BundleDetailScraper:
         """
         Extrae la lista de libros del bundle desde los datos del JSON.
         
-        Construye la lista de libros con sus metadatos, precios y tiers.
-        NO incluye imágenes.
+        Construye la lista de libros con sus metadatos, precios, imágenes y tiers.
         
         Args:
             tier_items: Diccionario con información de los items por tier

@@ -51,9 +51,10 @@
                 v-if="book.detail_image || book.image"
                 :src="book.detail_image || book.image || ''"
                 :alt="book.title || book.machine_name"
+                :data-fallback-src="book.image || ''"
                 class="book-detail-image"
                 loading="lazy"
-                @error="handleImageError"
+                @error="handleBookImageError"
               />
               <div class="book-info-grid">
                 <div class="info-item" v-if="book.machine_name">
@@ -161,9 +162,21 @@ const getImageUrl = (imageUrl: string | null | undefined): string => {
 
 const handleImageError = (event: Event) => {
   const img = event.target as HTMLImageElement;
-  // Ocultar la imagen si falla al cargar
+  // Ocultar la imagen si falla
   img.style.display = 'none';
   console.warn('Error cargando imagen del bundle:', img.src);
+};
+
+const handleBookImageError = (event: Event) => {
+  const img = event.target as HTMLImageElement;
+  const fallbackSrc = img.dataset.fallbackSrc;
+
+  if (fallbackSrc && img.src !== fallbackSrc) {
+    img.src = fallbackSrc;
+    return;
+  }
+
+  handleImageError(event);
 };
 
 

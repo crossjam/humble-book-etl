@@ -123,7 +123,7 @@
             <li>
               <a
                 class="api-docs-link"
-                href="/api/docs"
+                :href="apiDocsUrl"
                 target="_blank"
                 rel="noopener noreferrer"
               >
@@ -168,6 +168,7 @@ import ExtendedBundlesSection from "@components/sections/ExtendedBundlesSection.
 import { useResponsiveQueryEvent } from "@composables/useResponsiveQueryEvent";
 import { useBundles } from "@composables/useBundles";
 import { useAuth } from "@composables/useAuth";
+import { apiBaseURL } from "@/api/client";
 
 const router = useRouter();
 const auth = useAuth();
@@ -176,6 +177,7 @@ const { locale } = useI18n();
 const { isMobile } = useResponsiveQueryEvent();
 const { bundles, featured, activeBundles, loading, error, lastUpdate, etlResult, runETL } =
   useBundles();
+const apiDocsUrl = `${apiBaseURL.replace(/\/+$/, "")}/docs`;
 
 const activeTab = ref<"bundles" | "inactive" | "extended" | "tests">("bundles");
 

@@ -52,7 +52,7 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 SessionFactory = None
 AsyncSessionFactory = None
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl='/auth/login')
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl='auth/login')
 
 
 def get_async_engine():
