@@ -11,14 +11,7 @@ import click
 
 from . import __version__
 from .client import ApiClient, ApiError
-from .config import (
-    ENV_API_ENDPOINT,
-    ENV_API_URL,
-    Config,
-    default_config_path,
-    load_config,
-    save_config,
-)
+from .config import ENV_API_URL, Config, default_config_path, load_config, save_config
 
 
 class Context:
@@ -74,7 +67,7 @@ def handle_error(exc: ApiError) -> None:
 @click.group(context_settings={"help_option_names": ["-h", "--help"]})
 @click.option(
     "--api-url",
-    envvar=(ENV_API_URL, ENV_API_ENDPOINT),
+    envvar=ENV_API_URL,
     show_envvar=True,
     help="API base URL (default: http://localhost:5002).",
 )

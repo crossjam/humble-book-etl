@@ -46,8 +46,8 @@ def test_config_is_saved_with_restricted_permissions(tmp_path: Path):
     assert config_path.stat().st_mode & 0o777 == 0o600
 
 
-def test_api_url_accepts_environment_variable_alias(monkeypatch, tmp_path: Path):
-    monkeypatch.setenv("HBETL_API_ENDPOINT", "https://env.example.test")
+def test_api_url_accepts_environment_variable(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("HBETL_API_URL", "https://env.example.test")
 
     loaded = load_config(tmp_path / "missing.json")
 

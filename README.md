@@ -179,7 +179,7 @@ hbetl etl run
 ```
 
 The API URL defaults to `http://localhost:5002` and can be changed with
-`--api-url`, `HBETL_API_URL`, or `HBETL_API_ENDPOINT`. Authentication commands
+`--api-url` or `HBETL_API_URL`. Authentication commands
 are grouped under `hbetl auth`; login stores the bearer token in
 `~/.config/hbetl/config.json` (or `HBETL_CONFIG`); use `--json` for
 machine-readable output or `HBETL_TOKEN` for ephemeral credentials.
