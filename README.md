@@ -158,6 +158,28 @@ subpath.
 Important: `make db-reset` does not reset PostgreSQL. To clear the Docker
 database, use `make docker-down` or `docker compose down -v`.
 
+## API CLI
+
+The API client is installable as a package and exposes the `hbetl` command:
+
+```bash
+python -m pip install .
+hbetl about
+hbetl version
+hbetl login --username admin
+hbetl bundles list
+hbetl bundles list --inactive --all
+hbetl bundles get BUNDLE_ID
+hbetl bundles featured
+hbetl bundles raw-html BUNDLE_ID --output bundle.html
+hbetl raw-data latest
+hbetl etl run
+```
+
+The API URL defaults to `http://localhost:5002` and can be changed with
+`--api-url` or `HBETL_API_URL`. `login` stores the bearer token in
+`~/.config/hbetl/config.json` (or `HBETL_CONFIG`); use `--json` for
+machine-readable output or `HBETL_TOKEN` for ephemeral credentials.
 ## ETL
 
 ```bash

@@ -9,5 +9,7 @@ node_modules/
 .tsbuild/
 humble_bundle.db
 frontend/dist/
+build/
+*.egg-info/
 # roborev snapshots
 /.roborev/

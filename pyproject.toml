@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "humble-book-etl"
+version = "0.1.0"
+description = "CLI client for the Humble Book ETL API"
+requires-python = ">=3.12"
+dependencies = [
+  "click>=8.1",
+  "httpx>=0.28",
+]
+
+[project.scripts]
+hbetl = "hbetl_cli.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["hbetl_cli*"]
