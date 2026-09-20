@@ -55,7 +55,7 @@ def render(value: Any, *, as_json: bool) -> None:
 def client_for(ctx: click.Context, *, auth: bool = False) -> ApiClient:
     context: Context = ctx.find_root().obj
     if auth and not context.config.token:
-        raise click.ClickException("Authentication required; run `hbetl login` first.")
+        raise click.ClickException("Authentication required; run `hbetl auth login` first.")
     return ApiClient(context.config.api_url, context.config.token)
 
 
@@ -104,7 +104,12 @@ def version() -> None:
     click.echo(__version__)
 
 
-@main.command()
+@main.group()
+def auth() -> None:
+    """Authenticate and inspect the current API user."""
+
+
+@auth.command()
 @click.option("--username", prompt=True, help="API username.")
 @click.option("--password", prompt=True, hide_input=True, confirmation_prompt=False, envvar="HBETL_PASSWORD")
 @click.pass_context
@@ -128,7 +133,7 @@ def login(ctx: click.Context, username: str, password: str) -> None:
         click.echo(f"Token saved to {context.config_path}.")
 
 
-@main.command()
+@auth.command()
 @click.pass_context
 def logout(ctx: click.Context) -> None:
     """Remove the saved API token."""
@@ -156,7 +161,7 @@ def health(ctx: click.Context) -> None:
     render(result, as_json=ctx.find_root().meta["as_json"])
 
 
-@main.command()
+@auth.command()
 @click.pass_context
 def me(ctx: click.Context) -> None:
     """Show the authenticated user."""

@@ -25,8 +25,14 @@ def test_package_help_lists_api_capabilities():
     result = CliRunner().invoke(main, ["--help"])
 
     assert result.exit_code == 0
-    for command in ("about", "version", "login", "bundles", "raw-data", "etl"):
+    for command in ("about", "version", "auth", "bundles", "raw-data", "etl"):
         assert command in result.output
+
+    auth = CliRunner().invoke(main, ["auth", "--help"])
+    assert auth.exit_code == 0
+    assert "login" in auth.output
+    assert "logout" in auth.output
+    assert "me" in auth.output
 
 
 def test_config_is_saved_with_restricted_permissions(tmp_path: Path):

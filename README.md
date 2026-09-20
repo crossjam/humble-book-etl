@@ -166,7 +166,9 @@ The API client is installable as a package and exposes the `hbetl` command:
 python -m pip install .
 hbetl about
 hbetl version
-hbetl login --username admin
+hbetl auth login --username admin
+hbetl auth me
+hbetl auth logout
 hbetl bundles list
 hbetl bundles list --inactive --all
 hbetl bundles get BUNDLE_ID
@@ -177,7 +179,8 @@ hbetl etl run
 ```
 
 The API URL defaults to `http://localhost:5002` and can be changed with
-`--api-url` or `HBETL_API_URL`. `login` stores the bearer token in
+`--api-url` or `HBETL_API_URL`. Authentication commands are grouped under
+`hbetl auth`; login stores the bearer token in
 `~/.config/hbetl/config.json` (or `HBETL_CONFIG`); use `--json` for
 machine-readable output or `HBETL_TOKEN` for ephemeral credentials.
 ## ETL
