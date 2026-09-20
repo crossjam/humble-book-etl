@@ -250,7 +250,22 @@ pip install -r requirements-dev.txt
 python -m pytest
 ```
 
-## Authentication
+## Dependency security
+
+The pinned Python dependencies are maintained against `pip-audit` findings. Run
+this check from the repository root after installing the development
+requirements:
+
+```bash
+python -m pip_audit -r requirements.txt --ignore-vuln PYSEC-2026-1325
+```
+
+`PYSEC-2026-1325` applies to the `ecdsa` package's signing implementation and
+has no upstream fix. The application uses `python-jose` for JWT verification
+and signing through its supported cryptography path; the exception should be
+revisited if an upstream fix or an alternative JWT implementation becomes
+available.
+
 
 The `User` model is persisted in the same database configured by `DB_DB_TYPE`.
 
