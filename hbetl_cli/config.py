@@ -10,6 +10,7 @@ from typing import Any
 
 DEFAULT_API_URL = "http://localhost:5002"
 ENV_API_URL = "HBETL_API_URL"
+ENV_API_ENDPOINT = "HBETL_API_ENDPOINT"
 ENV_TOKEN = "HBETL_TOKEN"
 ENV_CONFIG = "HBETL_CONFIG"
 
@@ -38,7 +39,8 @@ def load_config(path: Path | None = None) -> Config:
             raise ValueError(f"Cannot read config file {config_path}: {exc}") from exc
         if not isinstance(values, dict):
             raise ValueError(f"Config file {config_path} must contain a JSON object")
-    api_url = os.environ.get(ENV_API_URL, values.get("api_url", DEFAULT_API_URL))
+    env_api_url = os.environ.get(ENV_API_URL) or os.environ.get(ENV_API_ENDPOINT)
+    api_url = env_api_url or values.get("api_url", DEFAULT_API_URL)
     token = os.environ.get(ENV_TOKEN, values.get("token"))
     return Config(api_url=str(api_url).rstrip("/"), token=token)
 

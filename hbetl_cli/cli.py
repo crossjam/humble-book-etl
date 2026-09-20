@@ -11,7 +11,14 @@ import click
 
 from . import __version__
 from .client import ApiClient, ApiError
-from .config import Config, default_config_path, load_config, save_config
+from .config import (
+    ENV_API_ENDPOINT,
+    ENV_API_URL,
+    Config,
+    default_config_path,
+    load_config,
+    save_config,
+)
 
 
 class Context:
@@ -65,7 +72,12 @@ def handle_error(exc: ApiError) -> None:
 
 
 @click.group(context_settings={"help_option_names": ["-h", "--help"]})
-@click.option("--api-url", envvar="HBETL_API_URL", help="API base URL (default: http://localhost:5002).")
+@click.option(
+    "--api-url",
+    envvar=(ENV_API_URL, ENV_API_ENDPOINT),
+    show_envvar=True,
+    help="API base URL (default: http://localhost:5002).",
+)
 @click.option("--token", envvar="HBETL_TOKEN", help="Bearer token; overrides the saved token.")
 @click.option("--config", "config_path", type=click.Path(path_type=None), help="Configuration file path.")
 @click.option("--json", "as_json", is_flag=True, help="Print machine-readable JSON output.")
@@ -86,10 +98,9 @@ def main(ctx: click.Context, api_url: str | None, token: str | None, config_path
     ctx.meta["as_json"] = as_json
 
 
-@main.command()
+@main.command(help="Show what this CLI does and where it stores credentials.")
 @click.pass_context
 def about(ctx: click.Context) -> None:
-    """Show what this CLI does and where it stores credentials."""
     context: Context = ctx.find_root().obj
     click.echo("hbetl — command-line client for the Humble Book ETL API")
     click.echo("Supports authentication, bundle queries, inactive-history pagination, raw data, and ETL runs.")
@@ -98,18 +109,18 @@ def about(ctx: click.Context) -> None:
     click.echo(f"Config: {context.config_path}")
 
 
-@main.command()
+@main.command(help="Show the CLI version.")
 def version() -> None:
     """Show the CLI version."""
     click.echo(__version__)
 
 
-@main.group()
+@main.group(help="Authenticate and inspect the current API user.")
 def auth() -> None:
     """Authenticate and inspect the current API user."""
 
 
-@auth.command()
+@auth.command(help="Authenticate and save the API token locally.")
 @click.option("--username", prompt=True, help="API username.")
 @click.option("--password", prompt=True, hide_input=True, confirmation_prompt=False, envvar="HBETL_PASSWORD")
 @click.pass_context
@@ -133,12 +144,10 @@ def login(ctx: click.Context, username: str, password: str) -> None:
         click.echo(f"Token saved to {context.config_path}.")
 
 
-@auth.command()
-@click.pass_context
+@auth.command(help="Remove the saved API token.")
 def logout(ctx: click.Context) -> None:
     """Remove the saved API token."""
     context: Context = ctx.find_root().obj
-    context.config.token = None
     try:
         save_config(context.config, context.config_path)
     except OSError as exc:
@@ -149,8 +158,7 @@ def logout(ctx: click.Context) -> None:
         click.echo("Logged out.")
 
 
-@main.command()
-@click.pass_context
+@main.command(help="Check API availability.")
 def health(ctx: click.Context) -> None:
     """Check API availability."""
     try:
@@ -161,8 +169,7 @@ def health(ctx: click.Context) -> None:
     render(result, as_json=ctx.find_root().meta["as_json"])
 
 
-@auth.command()
-@click.pass_context
+@auth.command(help="Show the authenticated user.")
 def me(ctx: click.Context) -> None:
     """Show the authenticated user."""
     try:
@@ -173,12 +180,12 @@ def me(ctx: click.Context) -> None:
     render(result, as_json=ctx.find_root().meta["as_json"])
 
 
-@main.group()
+@main.group(help="List and inspect bundles.")
 def bundles() -> None:
     """List and inspect bundles."""
 
 
-@bundles.command("list")
+@bundles.command("list", help="List active bundles, or page through inactive history.")
 @click.option("--inactive", is_flag=True, help="Include retained inactive bundles.")
 @click.option("--all", "all_items", is_flag=True, help="Follow inactive cursors until all available records are returned.")
 @click.option("--page-size", type=click.IntRange(1, 1000), default=100, show_default=True)
@@ -219,7 +226,7 @@ def bundles_list(ctx: click.Context, inactive: bool, all_items: bool, page_size:
     render(result, as_json=ctx.find_root().meta["as_json"])
 
 
-@bundles.command("get")
+@bundles.command("get", help="Get a bundle by UUID or machine name.")
 @click.argument("identifier")
 @click.option("--machine-name", is_flag=True, help="Treat IDENTIFIER as machine_name instead of UUID.")
 @click.pass_context
@@ -233,7 +240,7 @@ def bundles_get(ctx: click.Context, identifier: str, machine_name: bool) -> None
     render(result, as_json=ctx.find_root().meta["as_json"])
 
 
-@bundles.command("featured")
+@bundles.command("featured", help="Show the featured bundle.")
 @click.pass_context
 def bundles_featured(ctx: click.Context) -> None:
     """Show the featured bundle."""
@@ -245,7 +252,7 @@ def bundles_featured(ctx: click.Context) -> None:
     render(result, as_json=ctx.find_root().meta["as_json"])
 
 
-@bundles.command("raw-html")
+@bundles.command("raw-html", help="Fetch retained raw HTML for an authenticated bundle.")
 @click.argument("bundle_id")
 @click.option("--output", "output_path", type=click.Path(dir_okay=False, writable=True, path_type=None), help="Write HTML to a file instead of stdout.")
 @click.pass_context
@@ -267,12 +274,12 @@ def bundles_raw_html(ctx: click.Context, bundle_id: str, output_path: str | None
         click.echo(raw_html, nl=False)
 
 
-@main.group(name="raw-data")
+@main.group(name="raw-data", help="Inspect stored landing-page snapshots.")
 def raw_data() -> None:
     """Inspect stored landing-page snapshots."""
 
 
-@raw_data.command("list")
+@raw_data.command("list", help="List all stored landing-page snapshots.")
 @click.pass_context
 def raw_data_list(ctx: click.Context) -> None:
     """List all stored landing-page snapshots."""
@@ -284,7 +291,7 @@ def raw_data_list(ctx: click.Context) -> None:
     render(result, as_json=ctx.find_root().meta["as_json"])
 
 
-@raw_data.command("latest")
+@raw_data.command("latest", help="Show the latest landing-page snapshot.")
 @click.pass_context
 def raw_data_latest(ctx: click.Context) -> None:
     """Show the latest landing-page snapshot."""
@@ -296,7 +303,7 @@ def raw_data_latest(ctx: click.Context) -> None:
     render(result, as_json=ctx.find_root().meta["as_json"])
 
 
-@raw_data.command("get")
+@raw_data.command("get", help="Show one landing-page snapshot by ID.")
 @click.argument("raw_data_id")
 @click.pass_context
 def raw_data_get(ctx: click.Context, raw_data_id: str) -> None:
@@ -308,13 +315,12 @@ def raw_data_get(ctx: click.Context, raw_data_id: str) -> None:
         handle_error(exc)
     render(result, as_json=ctx.find_root().meta["as_json"])
 
-
-@main.group()
+@main.group(help="Run protected ETL operations.")
 def etl() -> None:
     """Run protected ETL operations."""
 
 
-@etl.command("run")
+@etl.command("run", help="Run the protected ETL job.")
 @click.pass_context
 def etl_run(ctx: click.Context) -> None:
     """Run the protected ETL job."""
@@ -326,7 +332,7 @@ def etl_run(ctx: click.Context) -> None:
     render(result, as_json=ctx.find_root().meta["as_json"])
 
 
-@main.command(name="lifecycle-events")
+@main.command(name="lifecycle-events", help="List bundle lifecycle events.")
 @click.option("--machine-name")
 @click.option("--event-type", type=click.Choice(["extended", "renewed", "shortened", "reactivated"]))
 @click.option("--limit", type=click.IntRange(1, 1000), default=100, show_default=True)
