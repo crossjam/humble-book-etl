@@ -138,6 +138,7 @@ def login(ctx: click.Context, username: str, password: str) -> None:
 
 
 @auth.command(help="Remove the saved API token.")
+@click.pass_context
 def logout(ctx: click.Context) -> None:
     """Remove the saved API token."""
     context: Context = ctx.find_root().obj
@@ -152,6 +153,7 @@ def logout(ctx: click.Context) -> None:
 
 
 @main.command(help="Check API availability.")
+@click.pass_context
 def health(ctx: click.Context) -> None:
     """Check API availability."""
     try:
@@ -163,6 +165,7 @@ def health(ctx: click.Context) -> None:
 
 
 @auth.command(help="Show the authenticated user.")
+@click.pass_context
 def me(ctx: click.Context) -> None:
     """Show the authenticated user."""
     try:

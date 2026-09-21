@@ -183,6 +183,36 @@ The API URL defaults to `http://localhost:5002` and can be changed with
 are grouped under `hbetl auth`; login stores the bearer token in
 `~/.config/hbetl/config.json` (or `HBETL_CONFIG`); use `--json` for
 machine-readable output or `HBETL_TOKEN` for ephemeral credentials.
+
+### Local deployment sanity checks
+
+The following checks were run successfully against the local deployment on
+September 21, 2026. The API URL can be supplied through the single
+`HBETL_API_URL` environment variable:
+
+```bash
+export HBETL_API_URL=http://localhost:5002
+hbetl version
+# 0.1.0
+
+hbetl about
+# hbetl — command-line client for the Humble Book ETL API
+# Supports authentication, bundle queries, inactive-history pagination, raw data, and ETL runs.
+# Version: 0.1.0
+# API: http://localhost:5002
+
+hbetl health
+# status: ok
+# database: /data/humble_bundle.db
+
+hbetl bundles list --limit 1
+# id                                    machine_name                              tile_name
+# ------------------------------------  ----------------------------------------  -----------------------------------------------------------
+# 8b23982a-27b6-4295-8968-10139b33811c  batmandaycomicsbundledccomics_bookbundle  Humble Comics Bundle: Batman Day Comics Bundle by DC Comics
+```
+
+The bundle result is an observed example; live bundle contents will change.
+
 ## ETL
 
 ```bash
