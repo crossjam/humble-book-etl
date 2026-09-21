@@ -42,7 +42,7 @@
           <span><strong>{{ activeBundles.length }}</strong> {{ $t('app.stats.active') }}</span>
         </div>
         <div class="last-update" v-show="lastUpdate">
-          <span>{{ $t('app.lastUpdate') }} {{ lastUpdate ? formatDate(lastUpdate) : '' }}</span>
+          <span>{{ $t('app.lastUpdate') }} {{ lastUpdate ? formatDateValue(lastUpdate.toISOString(), { locale }) : '' }}</span>
         </div>
         <button class="refresh" @click="handleRunEtl" :disabled="loading">
           {{ loading ? $t('app.buttons.updating') : $t('app.buttons.updateData') }}
@@ -168,6 +168,7 @@ import ExtendedBundlesSection from "@components/sections/ExtendedBundlesSection.
 import { useResponsiveQueryEvent } from "@composables/useResponsiveQueryEvent";
 import { useBundles } from "@composables/useBundles";
 import { useAuth } from "@composables/useAuth";
+import { formatDate as formatDateValue } from "@/utils/dateFormatter";
 import { apiBaseURL } from "@/api/client";
 
 const router = useRouter();
@@ -181,17 +182,6 @@ const apiDocsUrl = `${apiBaseURL.replace(/\/+$/, "")}/docs`;
 
 const activeTab = ref<"bundles" | "inactive" | "extended" | "tests">("bundles");
 
-const formatDate = (date: Date) => {
-  const dateLocale = locale.value === "es" ? "es-ES" : "en-US";
-  return new Intl.DateTimeFormat(dateLocale, {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    timeZone: "America/Lima"
-  }).format(date);
-};
 
 const handleRunEtl = async () => {
   if (!isAuthenticated.value) {

@@ -51,6 +51,7 @@ import { ref } from "vue";
 import { useI18n } from "vue-i18n";
 import type { Bundle } from "@/types/bundle";
 import BookModal from "./BookModal.vue";
+import { formatDate as formatDateValue } from "@/utils/dateFormatter";
 
 defineProps<{ bundle: Bundle }>();
 
@@ -66,12 +67,7 @@ const closeModal = () => {
 };
 
 const formatDate = (value?: string) => {
-  if (!value) return "—";
-  const dateLocale = locale.value === 'es' ? 'es-PE' : 'en-US';
-  return new Date(value).toLocaleDateString(dateLocale, {
-    month: "short",
-    day: "numeric"
-  });
+  return formatDateValue(value, { format: "short", locale: locale.value });
 };
 
 // Obtener URL de imagen directamente desde Humble Bundle
