@@ -232,7 +232,15 @@ class BundleCatalog:
             if bundle_identifier:
                 bundle = session.get(Bundle, bundle_identifier)
                 if bundle is None:
-                    bundle = session.scalar(select(Bundle).where(Bundle.machine_name == bundle_identifier))
+                    bundle_statement = select(Bundle).where(Bundle.machine_name == bundle_identifier)
+                    if not include_inactive:
+                        bundle_statement = bundle_statement.where(
+                            Bundle.is_active.is_(True),
+                            Bundle.archived_at.is_(None),
+                        )
+                    bundle = session.scalar(bundle_statement)
+                elif not include_inactive and not (bundle.is_active and bundle.archived_at is None):
+                    bundle = None
                 bundles = [bundle] if bundle is not None else []
             else:
                 statement = select(Bundle).order_by(

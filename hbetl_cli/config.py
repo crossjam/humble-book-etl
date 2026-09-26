@@ -46,7 +46,9 @@ def load_config(path: Path | None = None) -> Config:
 def save_config(config: Config, path: Path | None = None) -> Path:
     config_path = path or default_config_path()
     config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(json.dumps({"api_url": config.api_url, "token": config.token}, indent=2) + "\n")
+    payload = (json.dumps({"api_url": config.api_url, "token": config.token}, indent=2) + "\n").encode()
+    with os.fdopen(os.open(config_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "wb") as stream:
+        stream.write(payload)
     config_path.chmod(0o600)
     return config_path
 

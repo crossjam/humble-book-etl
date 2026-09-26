@@ -43,3 +43,16 @@ def test_client_sends_bearer_token_and_encodes_identifiers():
     assert seen[0].url.raw_path == b"/bundles/by-machine-name/name%20with%20space"
     assert seen[1].headers["Authorization"] == "Bearer secret"
     assert seen[1].url.raw_path == b"/bundles/bundle%2F1/raw-html"
+
+
+def test_client_preserves_deployment_path_prefix():
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"status": "ok"})
+
+    with ApiClient("https://api.example.test/humblebundlespider/api", transport=httpx.MockTransport(handler)) as client:
+        assert client.health() == {"status": "ok"}
+
+    assert seen[0].url.path == "/humblebundlespider/api/health"

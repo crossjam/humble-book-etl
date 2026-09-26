@@ -328,6 +328,7 @@ and signing through its supported cryptography path; the exception should be
 revisited if an upstream fix or an alternative JWT implementation becomes
 available.
 
+## Authentication
 
 The `User` model is persisted in the same database configured by `DB_DB_TYPE`.
 

@@ -11,7 +11,7 @@ import click
 
 from . import __version__
 from .client import ApiClient, ApiError
-from .config import ENV_API_URL, Config, default_config_path, load_config, save_config
+from .config import ENV_API_URL, Config, clear_token, default_config_path, load_config, save_config
 
 
 class Context:
@@ -143,7 +143,7 @@ def logout(ctx: click.Context) -> None:
     """Remove the saved API token."""
     context: Context = ctx.find_root().obj
     try:
-        save_config(context.config, context.config_path)
+        clear_token(context.config, context.config_path)
     except OSError as exc:
         raise click.ClickException(f"Cannot save config file {context.config_path}: {exc}") from exc
     if ctx.find_root().meta["as_json"]:

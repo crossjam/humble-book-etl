@@ -76,6 +76,37 @@ def test_catalog_exposes_bundle_and_book_metadata(tmp_path: Path, monkeypatch):
     catalog.engine.dispose()
 
 
+def test_bundle_identifier_search_respects_inactive_filter(tmp_path: Path):
+    catalog = _catalog(tmp_path)
+    with catalog.session() as session:
+        session.add(
+            Bundle(
+                id="inactive-bundle",
+                machine_name="inactive-book-bundle",
+                tile_name="Inactive Book Bundle",
+                start_date_datetime=datetime(2026, 8, 1),
+                end_date_datetime=datetime(2026, 8, 31),
+                verification_date=datetime(2026, 9, 20),
+                is_active=False,
+                book_list=[
+                    {
+                        "machine_name": "inactive-book",
+                        "title": "Inactive Book",
+                    }
+                ],
+            )
+        )
+        session.commit()
+
+    assert catalog.search_books("Inactive Book", bundle_identifier="inactive-bundle") == []
+    assert catalog.search_books(
+        "Inactive Book",
+        bundle_identifier="inactive-bundle",
+        include_inactive=True,
+    )[0].bundle_id == "inactive-bundle"
+    catalog.engine.dispose()
+
+
 def test_fastmcp_tools_and_resources_are_registered(tmp_path: Path, monkeypatch):
     catalog = _catalog(tmp_path)
     monkeypatch.setattr(server, "_catalog", catalog)

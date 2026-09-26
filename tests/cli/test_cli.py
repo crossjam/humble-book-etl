@@ -4,7 +4,7 @@ from click.testing import CliRunner
 
 from hbetl_cli import __version__
 from hbetl_cli.cli import main
-from hbetl_cli.config import Config, load_config, save_config
+from hbetl_cli.config import Config, clear_token, load_config, save_config
 
 
 def test_about_and_version_are_available():
@@ -52,3 +52,13 @@ def test_api_url_accepts_environment_variable(monkeypatch, tmp_path: Path):
     loaded = load_config(tmp_path / "missing.json")
 
     assert loaded.api_url == "https://env.example.test"
+
+
+def test_logout_clears_saved_token(tmp_path: Path):
+    config_path = tmp_path / "config.json"
+    save_config(Config(api_url="https://api.example.test", token="secret"), config_path)
+
+    config = load_config(config_path)
+    clear_token(config, config_path)
+
+    assert load_config(config_path).token is None

@@ -37,7 +37,7 @@ class ApiClient:
     def __init__(self, base_url: str, token: str | None = None, transport: httpx.BaseTransport | None = None):
         self.base_url = base_url.rstrip("/")
         self.token = token
-        self.http = httpx.Client(base_url=self.base_url, transport=transport, timeout=60.0)
+        self.http = httpx.Client(base_url=f"{self.base_url}/", transport=transport, timeout=60.0)
 
     def close(self) -> None:
         self.http.close()
@@ -50,12 +50,13 @@ class ApiClient:
 
     def _request(self, method: str, path: str, *, auth: bool = False, **kwargs: Any) -> httpx.Response:
         headers = dict(kwargs.pop("headers", {}))
+        request_path = path.lstrip("/")
         if auth:
             if not self.token:
-                raise ApiError(401, "Authentication required; run `hbetl login` first.", method, path)
+                raise ApiError(401, "Authentication required; run `hbetl auth login` first.", method, path)
             headers["Authorization"] = f"Bearer {self.token}"
         try:
-            response = self.http.request(method, path, headers=headers, **kwargs)
+            response = self.http.request(method, request_path, headers=headers, **kwargs)
         except httpx.HTTPError as exc:
             raise ApiError(0, f"Could not reach API at {self.base_url}: {exc}", method, path) from exc
         if response.is_error:
@@ -67,7 +68,7 @@ class ApiClient:
                 detail = "; ".join(str(item.get("msg", item)) if isinstance(item, dict) else str(item) for item in detail)
             message = str(detail).strip() or response.reason_phrase
             if response.status_code == 401:
-                message += " (run `hbetl login` to authenticate)"
+                message += " (run `hbetl auth login` to authenticate)"
             raise ApiError(response.status_code, message, method, path)
         return response
 
