@@ -26,6 +26,20 @@ client. For local Streamable HTTP testing, bind only to loopback:
 hbetl-mcp --transport streamable-http --host 127.0.0.1 --port 8000
 ```
 
+## API route
+
+The FastAPI application mounts the same MCP server at `/mcp`. When the API is
+running on its normal port, use:
+
+```text
+http://localhost:5002/mcp
+```
+
+This route runs in the API process, shares its database configuration and
+lifespan, and does not require a second MCP systemd service. The standalone
+`hbetl-mcp` command remains useful for stdio clients or an independently
+managed MCP listener.
+
 The server is intentionally read-only and does not expose credentials, raw
 HTML, login, or ETL mutation operations. Do not publish the HTTP listener
 without adding deployment authentication and network controls.

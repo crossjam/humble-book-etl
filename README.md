@@ -218,6 +218,7 @@ The bundle result is an observed example; live bundle contents will change.
 The read-only `hbetl-mcp` server exposes bundle discovery and the book metadata
 embedded in each bundle through FastMCP tools and resources. See
 [`docs/mcp.md`](docs/mcp.md) for installation, transports, and the data model.
+The FastAPI deployment also serves the MCP endpoint at `/mcp` on port `5002`.
 
 ## ETL
 
