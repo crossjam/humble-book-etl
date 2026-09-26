@@ -213,6 +213,12 @@ hbetl bundles list --limit 1
 
 The bundle result is an observed example; live bundle contents will change.
 
+## MCP server
+
+The read-only `hbetl-mcp` server exposes bundle discovery and the book metadata
+embedded in each bundle through FastMCP tools and resources. See
+[`docs/mcp.md`](docs/mcp.md) for installation, transports, and the data model.
+
 ## ETL
 
 ```bash

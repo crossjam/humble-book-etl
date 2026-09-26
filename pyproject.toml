@@ -8,12 +8,19 @@ version = "0.1.0"
 description = "CLI client for the Humble Book ETL API"
 requires-python = ">=3.12"
 dependencies = [
+  "beautifulsoup4>=4.12",
   "click>=8.1",
+  "fastmcp>=4.0.5,<5",
   "httpx>=0.28",
+  "pandas>=2.2",
+  "pydantic>=2.9",
+  "pydantic-settings>=2.6",
+  "sqlalchemy>=2.0",
 ]
 
 [project.scripts]
 hbetl = "hbetl_cli.cli:main"
+hbetl-mcp = "hbetl_mcp.server:main"
 
 [tool.setuptools.packages.find]
-include = ["hbetl_cli*"]
+include = ["hbetl_cli*", "hbetl_mcp*", "spider*"]
