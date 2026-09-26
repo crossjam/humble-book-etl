@@ -2,6 +2,7 @@ import { ref, computed, onMounted } from "vue";
 import type { Bundle } from "@/types/bundle";
 import { get, getResponse, postLong, isAxiosError } from "@api/client";
 import { useAuth } from "@composables/useAuth";
+import { parseApiDate } from '@/utils/dateFormatter';
 
 interface ETLRunResponse {
   bundles_processed: number;
@@ -26,10 +27,10 @@ export function useBundles(options: UseBundlesOptions = {}) {
       .filter((bundle) => bundle.is_active && !bundle.archived_at)
       .sort((a, b) => {
         const endDateA = a.end_date_datetime
-          ? new Date(a.end_date_datetime).getTime()
+          ? parseApiDate(a.end_date_datetime).getTime()
           : Number.POSITIVE_INFINITY;
         const endDateB = b.end_date_datetime
-          ? new Date(b.end_date_datetime).getTime()
+          ? parseApiDate(b.end_date_datetime).getTime()
           : Number.POSITIVE_INFINITY;
         return endDateA - endDateB;
       }),
@@ -118,7 +119,7 @@ export function useBundles(options: UseBundlesOptions = {}) {
       ].filter(Boolean) as string[];
       
       if (allDates.length > 0) {
-        const dates = allDates.map(d => new Date(d));
+        const dates = allDates.map(parseApiDate);
         lastUpdate.value = new Date(Math.max(...dates.map(d => d.getTime())));
       }
     } catch (err) {

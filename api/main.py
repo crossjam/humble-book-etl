@@ -45,6 +45,7 @@ from spider.core.errors import HumbleSpiderError
 from spider.database.models import Bundle, BundleLifecycleEvent, LandingPageRawData, User
 from spider.config.settings import get_settings
 from spider.database.seed import ensure_admin_user
+from hbetl_mcp.server import mcp
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +77,7 @@ def get_async_engine():
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def api_lifespan(app: FastAPI):
     """Lifespan to initialize async resources."""
     global AsyncSessionFactory
     async_engine = get_async_engine()
@@ -142,6 +143,17 @@ async def lifespan(app: FastAPI):
     yield
     await async_engine.dispose()
 
+
+mcp_http_app = mcp.http_app(path="/")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Run the API and MCP application lifecycles together."""
+    async with api_lifespan(app):
+        async with mcp_http_app.lifespan(mcp_http_app):
+            yield
+
 app = FastAPI(
     title='Humble Bundle ETL API',
     version='1.0.2',
@@ -150,6 +162,8 @@ app = FastAPI(
     redoc_url=None,
     docs_url=None,
 )
+
+app.mount("/mcp", mcp_http_app)
 
 
 @app.get('/docs', include_in_schema=False, response_class=HTMLResponse)

@@ -158,6 +158,68 @@ subpath.
 Important: `make db-reset` does not reset PostgreSQL. To clear the Docker
 database, use `make docker-down` or `docker compose down -v`.
 
+## API CLI
+
+The API client is installable as a package and exposes the `hbetl` command:
+
+```bash
+python -m pip install .
+hbetl about
+hbetl version
+hbetl auth login --username admin
+hbetl auth me
+hbetl auth logout
+hbetl bundles list
+hbetl bundles list --inactive --all
+hbetl bundles get BUNDLE_ID
+hbetl bundles featured
+hbetl bundles raw-html BUNDLE_ID --output bundle.html
+hbetl raw-data latest
+hbetl etl run
+```
+
+The API URL defaults to `http://localhost:5002` and can be changed with
+`--api-url` or `HBETL_API_URL`. Authentication commands
+are grouped under `hbetl auth`; login stores the bearer token in
+`~/.config/hbetl/config.json` (or `HBETL_CONFIG`); use `--json` for
+machine-readable output or `HBETL_TOKEN` for ephemeral credentials.
+
+### Local deployment sanity checks
+
+The following checks were run successfully against the local deployment on
+September 21, 2026. The API URL can be supplied through the single
+`HBETL_API_URL` environment variable:
+
+```bash
+export HBETL_API_URL=http://localhost:5002
+hbetl version
+# 0.1.0
+
+hbetl about
+# hbetl — command-line client for the Humble Book ETL API
+# Supports authentication, bundle queries, inactive-history pagination, raw data, and ETL runs.
+# Version: 0.1.0
+# API: http://localhost:5002
+
+hbetl health
+# status: ok
+# database: /data/humble_bundle.db
+
+hbetl bundles list --limit 1
+# id                                    machine_name                              tile_name
+# ------------------------------------  ----------------------------------------  -----------------------------------------------------------
+# 8b23982a-27b6-4295-8968-10139b33811c  batmandaycomicsbundledccomics_bookbundle  Humble Comics Bundle: Batman Day Comics Bundle by DC Comics
+```
+
+The bundle result is an observed example; live bundle contents will change.
+
+## MCP server
+
+The read-only `hbetl-mcp` server exposes bundle discovery and the book metadata
+embedded in each bundle through FastMCP tools and resources. See
+[`docs/mcp.md`](docs/mcp.md) for installation, transports, and the data model.
+The FastAPI deployment also serves the MCP endpoint at `/mcp` on port `5002`.
+
 ## ETL
 
 ```bash
@@ -249,6 +311,22 @@ Install the development dependencies and run the pytest suite:
 pip install -r requirements-dev.txt
 python -m pytest
 ```
+
+## Dependency security
+
+The pinned Python dependencies are maintained against `pip-audit` findings. Run
+this check from the repository root after installing the development
+requirements:
+
+```bash
+python -m pip_audit -r requirements.txt --ignore-vuln PYSEC-2026-1325
+```
+
+`PYSEC-2026-1325` applies to the `ecdsa` package's signing implementation and
+has no upstream fix. The application uses `python-jose` for JWT verification
+and signing through its supported cryptography path; the exception should be
+revisited if an upstream fix or an alternative JWT implementation becomes
+available.
 
 ## Authentication
 
