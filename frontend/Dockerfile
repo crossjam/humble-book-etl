@@ -26,11 +26,15 @@ COPY --from=builder /app/dist /usr/share/nginx/html
 RUN echo 'server { \
     listen 3002; \
     server_name localhost; \
+    absolute_redirect off; \
     root /usr/share/nginx/html; \
     index index.html; \
     \
     # Configuración para archivos estáticos \
     # API reverse proxy for same-origin tailnet access
+    location = /api/mcp { \
+        return 307 /api/mcp/; \
+    } \
     location /api/ { \
         proxy_pass http://host.docker.internal:5002/; \
         proxy_http_version 1.1; \
