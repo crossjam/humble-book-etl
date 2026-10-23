@@ -1,7 +1,9 @@
 # Stage 1: Build
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 
 WORKDIR /app
+
+RUN apk add --no-cache ca-certificates
 
 ARG VITE_API_BASE_URL
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
@@ -18,6 +20,8 @@ RUN npm run build
 
 # Stage 2: Production
 FROM nginx:alpine
+
+RUN apk add --no-cache ca-certificates
 
 # Copiar archivos build desde el stage anterior
 COPY --from=builder /app/dist /usr/share/nginx/html
