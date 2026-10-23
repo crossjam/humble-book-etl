@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     libc6-dev \
+    ca-certificates \
     postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
