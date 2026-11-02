@@ -48,6 +48,7 @@ export default {
     buttons: {
       updateData: 'Actualizar datos',
       updating: 'Actualizando...',
+      openShelley: 'Abrir chat de Shelley',
     },
     etlResult: {
       title: 'Resultado de actualización:',

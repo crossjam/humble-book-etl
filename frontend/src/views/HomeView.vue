@@ -44,9 +44,20 @@
         <div class="last-update" v-show="lastUpdate">
           <span>{{ $t('app.lastUpdate') }} {{ lastUpdate ? formatDateValue(lastUpdate.toISOString(), { locale }) : '' }}</span>
         </div>
-        <button class="refresh" @click="handleRunEtl" :disabled="loading">
-          {{ loading ? $t('app.buttons.updating') : $t('app.buttons.updateData') }}
-        </button>
+        <div class="update-actions">
+          <button class="refresh" @click="handleRunEtl" :disabled="loading">
+            {{ loading ? $t('app.buttons.updating') : $t('app.buttons.updateData') }}
+          </button>
+          <a
+            v-if="isAuthenticated"
+            class="shelley-link"
+            :href="shelleyChatUrl"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            {{ $t('app.buttons.openShelley') }}
+          </a>
+        </div>
         <p v-show="error" class="error">{{ error }}</p>
         
         <div v-if="etlResult" class="etl-result">
@@ -179,6 +190,9 @@ const { isMobile } = useResponsiveQueryEvent();
 const { bundles, featured, activeBundles, loading, error, lastUpdate, etlResult, runETL } =
   useBundles();
 const apiDocsUrl = `${apiBaseURL.replace(/\/+$/, "")}/docs`;
+const shelleyChatUrl =
+  import.meta.env.VITE_SHELLEY_CHAT_URL ||
+  "https://dev-pirateninja-hbetl.shelley.exe.xyz/";
 
 const activeTab = ref<"bundles" | "inactive" | "extended" | "tests">("bundles");
 
@@ -297,7 +311,6 @@ const handleLogout = () => {
     }
 
     .refresh {
-      align-self: flex-start;
       background: var(--primary);
       color: white;
       padding: 12px 24px;
@@ -325,6 +338,20 @@ const handleLogout = () => {
       &:active:not(:disabled) {
         transform: translateY(0);
       }
+    }
+
+    .update-actions {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .shelley-link {
+      color: var(--primary);
+      font-weight: 600;
+      text-decoration: underline;
+      text-underline-offset: 3px;
     }
 
     .error {
