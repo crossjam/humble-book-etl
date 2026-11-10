@@ -98,6 +98,8 @@ export default {
   },
   bundleCard: {
     ends: 'Termina',
+    endingToday: 'Termina hoy',
+    endingTomorrow: 'Termina mañana',
     viewBundle: 'Ver bundle →',
   },
   bookModal: {

@@ -98,6 +98,8 @@ export default {
   },
   bundleCard: {
     ends: 'Ends',
+    endingToday: 'Ending today',
+    endingTomorrow: 'Ending tomorrow',
     viewBundle: 'View bundle →',
   },
   bookModal: {

@@ -24,6 +24,14 @@
         {{ bundle.category }} • {{ $t('bundleCard.ends') }} {{
           formatDate(bundle.end_date_datetime)
         }}
+        <span
+          v-if="endingStatus"
+          class="ending-soon"
+          :class="`ending-soon--${endingStatus}`"
+          role="status"
+        >
+          {{ $t(`bundleCard.${endingStatus}`) }}
+        </span>
       </p>
       <p class="msrp">MSRP: ${{ bundle.msrp_total ?? "—" }}</p>
       <div class="tiers" v-if="bundle.price_tiers?.length">
@@ -47,16 +55,22 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import type { Bundle } from "@/types/bundle";
 import BookModal from "./BookModal.vue";
-import { formatDate as formatDateValue } from "@/utils/dateFormatter";
+import {
+  formatDate as formatDateValue,
+  getBundleEndingStatus,
+} from "@/utils/dateFormatter";
 
-defineProps<{ bundle: Bundle }>();
+const props = defineProps<{ bundle: Bundle }>();
 
 const { locale } = useI18n();
 const showModal = ref(false);
+const endingStatus = computed(() =>
+  getBundleEndingStatus(props.bundle.end_date_datetime),
+);
 
 const openModal = () => {
   showModal.value = true;
@@ -141,6 +155,19 @@ const handleImageError = (event: Event) => {
     font-size: 0.85rem;
     color: var(--text);
     margin: 0;
+  }
+
+  .ending-soon {
+    display: inline-block;
+    margin-left: 8px;
+    padding: 3px 9px;
+    border-radius: 999px;
+    background: #b42318;
+    color: #fff;
+    font-size: 0.75rem;
+    font-weight: 700;
+    line-height: 1.4;
+    white-space: nowrap;
   }
 
   .msrp {
