@@ -7,6 +7,8 @@ from ..database.persistence import (
     persist_bundles,
     remove_outdated_bundles,
     persist_landing_page_raw_data,
+    ScrapeQualityError,
+    validate_scrape_quality,
 )
 
 
@@ -32,6 +34,14 @@ def main() -> None:
 
     SessionFactory = get_session_factory(settings)
     with SessionFactory() as session:
+        try:
+            validate_scrape_quality(
+                records, session,
+                now=raw_data_record.scraped_date if raw_data_record else None,
+            )
+        except ScrapeQualityError as exc:
+            raise SystemExit(f'Error de calidad del scrape: {exc}') from exc
+
         raw_data = None
         if raw_data_record:
             print('Persistiendo raw data de landingPage...')

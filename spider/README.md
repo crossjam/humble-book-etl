@@ -2,6 +2,23 @@
 
 Este paquete encapsula el scraper ETL que obtiene bundles de **Humble Bundle Books**, normaliza los datos, descarga el detalle de cada bundle y persiste todo en SQLite.
 
+## Adaptadores de fuente (2026-11-12)
+
+El sitio actual usa datos Next.js Flight embebidos. `scrapers/next_page.py`
+decodifica frames JSON y texto UTF-8, sin ejecutar JavaScript, y resuelve las
+referencias de datos de los tiers acumulativos. Los parsers legacy
+`landingPage-json-data` / `webpack-bundle-page-data` siguen disponibles.
+Los IDs provienen de `productKey` / `key`, nunca del slug; las fechas reales
+vienen del detalle. Un listado Next exige detalles válidos para todos los bundles.
+
+Antes de guardar snapshots, archivar o actualizar, tanto CLI como API rechazan
+scrapes vacíos/duplicados o con caída de más del 50% respecto al baseline confiable.
+Los datos omitidos/null no borran metadatos existentes; las listas explícitas
+sí son autoritativas. La disponibilidad usa `start <= UTC now < end`, también
+en las consultas públicas API/MCP aunque el ETL haya fallado.
+
+Ver [contrato, fixtures y checklist de migración](../docs/humble-nextjs-migration.md).
+
 ## Estructura del Módulo
 
 ```
@@ -20,7 +37,8 @@ spider/
 │
 ├── scrapers/                # Scrapers especializados
 │   ├── __init__.py
-│   └── bundle_detail_scraper.py  # BundleDetailScraper (detalles de bundles)
+│   ├── bundle_detail_scraper.py  # BundleDetailScraper (detalles de bundles)
+│   └── next_page.py         # Adaptador versionado de Next.js Flight
 │
 ├── schemas/                 # Modelos Pydantic
 │   ├── __init__.py
@@ -63,9 +81,9 @@ El sistema implementa un pipeline ETL (Extract, Transform, Load) para obtener, n
 ## Flujo general
 
 - **`cli/run_spider.py`**: punto de entrada. Carga configuración (`DB_*`), ejecuta `HumbleSpider`, archiva bundles expirados y guarda los nuevos/actualizados.
-- **`core/HumbleSpider`**: hace GET a `https://www.humblebundle.com/books`, lee el `<script id="landingPage-json-data">`, normaliza campos con pandas y Pydantic (`BundleRecord`), y para cada bundle consulta el detalle con `BundleDetailScraper`.
-- **`scrapers/BundleDetailScraper`**: descarga la página del bundle (`webpack-bundle-page-data`), extrae tiers, libros, MSRP total y tile_logo desde el JSON embebido.
-- **Persistencia**: `database/persistence.py` hace upsert de los bundles (clave `machine_name`) usando SQLite, recrea columnas faltantes y permite archivar el JSON bruto de `landingPage-json-data`.
+- **`core/HumbleSpider`**: hace GET a `https://www.humblebundle.com/books`, detecta el payload Next o legacy, normaliza campos con pandas y Pydantic (`BundleRecord`), y para cada bundle consulta el detalle con `BundleDetailScraper`.
+- **`scrapers/BundleDetailScraper`**: descarga la página del bundle, lee el modelo Next correspondiente al slug (o `webpack-bundle-page-data` legacy), extrae fechas, tiers, libros, MSRP e imágenes.
+- **Persistencia**: `database/persistence.py` valida calidad antes de escribir, hace upsert por `machine_name`, conserva metadatos desconocidos y archiva snapshots versionados.
 
 ## Modelo de Datos
 
@@ -143,7 +161,7 @@ Cada evento conserva `machine_name`, el `bundle_id` cuando existe, tipo (`extend
 ├─────────────────────────────────────────────────────────────────────┤
 │ HumbleSpider.fetch_bundles()                                        │
 │   └─> GET https://www.humblebundle.com/books                        │
-│       └─> Extrae <script id="landingPage-json-data">               │
+│       └─> Detecta listado Next.js Flight o JSON legacy             │
 │           └─> Parsea JSON → products[]                              │
 └─────────────────────────────────────────────────────────────────────┘
                               ▼
@@ -166,7 +184,7 @@ Cada evento conserva `machine_name`, el `bundle_id` cuando existe, tipo (`extend
 │   Para cada producto:                                               │
 │     └─> BundleDetailScraper.fetch_bundle_details(product_url)       │
 │         ├─> GET página del bundle                                   │
-│         ├─> Extrae <script id="webpack-bundle-page-data">          │
+│         ├─> Extrae modelo Next.js Flight o JSON legacy             │
 │         ├─> Parsea JSON embebido                                   │
 │         ├─> Extrae price_tiers, metadatos detallados por título y msrp_total │
 │         ├─> Normaliza tile_logo (si existe)                         │
@@ -178,7 +196,7 @@ Cada evento conserva `machine_name`, el `bundle_id` cuando existe, tipo (`extend
 ├─────────────────────────────────────────────────────────────────────┤
 │ BundleRecord.model_validate(item)                                   │
 │   └─> Pydantic valida tipos, longitudes, formatos                   │
-│       └─> Registros inválidos → descartados (log)                   │
+│       └─> Registro inválido → aborta el scrape sin persistir        │
 └─────────────────────────────────────────────────────────────────────┘
                               ▼
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -211,28 +229,29 @@ Cada evento conserva `machine_name`, el `bundle_id` cuando existe, tipo (`extend
 
 ### CLI
 
-- `cli/run_spider.py`: script ejecutable. Orquesta el flujo completo: lee settings con `get_settings()`, instancia `HumbleSpider`, captura `HumbleSpiderError` para salir con código distinto de cero, archiva bundles expirados con `remove_outdated_bundles` y persiste resultados con `persist_bundles`. Crea sesiones usando `get_session_factory`.
+- `cli/run_spider.py`: script ejecutable. Lee settings, instancia `HumbleSpider`, captura errores de fuente/calidad y valida el catálogo antes de cualquier escritura. Después guarda el snapshot, archiva expirados y persiste bundles. Crea sesiones usando `get_session_factory`.
 
 ### Core
 
 - `core/spider.py`: clase `HumbleSpider`.
   - Constantes `URL`, `SCRIPT_ID`, listas de columnas JSON/fecha/texto.
   - `fetch_bundles()`: pipeline principal: obtiene payload, extrae productos, normaliza DataFrame, convierte a `BundleRecord`.
-  - `get_raw_data_record()`: expone el último JSON bruto (`landingPage-json-data`) con hash y metadata listo para persistir en `landing_page_raw_data`.
-  - `_fetch_raw_payload()`: hace GET al listado y parsea el script JSON embebido, levantando `HumbleSpiderError` si falta.
-  - `_extract_products()`: navega el JSON `data.books.mosaic[0].products` y lanza excepción si la estructura cambia.
+  - `get_raw_data_record()`: expone el último payload exitoso con hash y versión listo para persistir en `landing_page_raw_data`.
+  - `_fetch_raw_payload()`: hace GET, detecta JSON legacy o Flight y levanta `HumbleSpiderError` si el payload no es válido.
+  - `_extract_products()`: adapta `feedItems` Next o todos los mosaics legacy; rechaza catálogo vacío o identidades duplicadas.
   - `_normalize_products()`: usa pandas para limpiar, convertir fechas a UTC, serializar campos JSON, normalizar texto, absolutizar URLs y calcular `duration_days`/`is_active`.
-  - `_to_records()`: itera filas, pide detalle por bundle, fusiona `price_tiers`, `book_list`, `featured_image`, `msrp_total` y `raw_html`; valida con Pydantic y descarta registros inválidos con logging.
+  - `_to_records()`: obtiene detalle, fusiona fechas reales y enriquecimiento, recalcula disponibilidad/duración y valida con Pydantic. Cualquier registro inválido aborta el scrape; el formato Next exige detalle válido.
 - `core/errors.py`: define excepciones de dominio `HumbleSpiderError`.
 
 ### Scrapers
 
 - `scrapers/bundle_detail_scraper.py`: clase `BundleDetailScraper`.
-  - `fetch_bundle_details(product_path)`: descarga la página de un bundle, busca el `<script id="webpack-bundle-page-data">` para leer `bundleData`, arma tiers (`_extract_price_tiers`), libros (`_extract_book_list`), msrp total y guarda `raw_html`.
+  - `fetch_bundle_details(product_path)`: descarga y adapta datos Next o legacy; conserva tiers, libros, fechas e imágenes. Fallos de red/formato devuelven `None`, nunca un detalle vacío exitoso.
   - `_extract_price_tiers()`: extrae información de precios por tier desde el JSON.
   - `_extract_book_list()`: extrae `machine_name`, título, autores/creadores, editoriales, descripción, formatos, imágenes, MSRP, preview, tipo de contenido y tiers. Los datos provienen de `bundleData.tier_item_data`, el mismo payload que alimenta el panel de detalle abierto por los enlaces `href="#"` de la página.
   - `_safe_amount()`: extrae valores numéricos de objetos de dinero del JSON.
-  - Incluye dataclass `BundleDetails` con price_tiers, book_list, msrp_total y raw_html.
+  - `next_page.py`: parser Flight limitado con presupuestos de tamaño/profundidad/expansión, texto UTF-8 por bytes, referencias exactas y paths React; no evalúa JavaScript.
+  - Incluye dataclass `BundleDetails` con price_tiers, book_list, msrp_total, raw_html y fechas/imágenes opcionales.
 
 ### Schemas
 
@@ -241,7 +260,7 @@ Cada evento conserva `machine_name`, el `bundle_id` cuando existe, tipo (`extend
   - Validadores: convierten highlights a string, controlan no negativos en `bundles_sold_decimal`/`duration_days`.
   - `to_orm_payload()`: adapta el diccionario para la capa ORM (cambia `type`→`_type`, cast de URL a string).
 - `schemas/raw_data.py`: modelo Pydantic `LandingPageRawDataRecord`.
-  - Guarda el JSON bruto del script `landingPage-json-data` con `scraped_date`, `source_url`, hash (`json_hash`) y campo de versión opcional.
+  - Guarda el payload de listado (legacy o Flight + productos) con `scraped_date`, `source_url`, hash y versión.
   - `to_orm_payload()`: devuelve el diccionario listo para persistir en `landing_page_raw_data`.
 
 ### Base de datos
@@ -278,7 +297,7 @@ Cada evento conserva `machine_name`, el `bundle_id` cuando existe, tipo (`extend
 ## Esquema de datos (SQLite)
 
 - **bundle**: datos normalizados del listado + detalles (tiers, libros, tile_logo, HTML raw, flags `is_active`/`archived_at`/`duration_days`).
-- **landing_page_raw_data**: snapshots del JSON bruto de `landingPage-json-data` con fecha de scraping, URL fuente, hash y versión opcional.
+- **landing_page_raw_data**: snapshots del listado legacy o Flight con fecha, URL fuente, hash y versión; productos Next incluyen las fechas observadas en el detalle para replay.
 
 **Nota**: Los tipos de datos usan SQLite (String en lugar de UUID, TEXT/JSON en lugar de JSONB, REAL en lugar de DOUBLE PRECISION).
 
@@ -301,13 +320,15 @@ make etl
 
 El flujo creará tablas si no existen, archivará bundles expirados y hará upsert de los actuales en SQLite.
 
-El JSON bruto (`landingPage-json-data`) de la fase de extracción puede almacenarse en `landing_page_raw_data` combinando `HumbleSpider.get_raw_data_record()` con `persist_landing_page_raw_data()`.
+El payload de extracción puede almacenarse con `get_raw_data_record()` y
+`persist_landing_page_raw_data()`, siempre después de `validate_scrape_quality()`.
 
 ## Consideraciones y limitaciones
 
-- Depende de la estructura actual de la página: `<script id="landingPage-json-data">` para el listado y `<script id="webpack-bundle-page-data">` en cada bundle. Cambios en el sitio pueden romper el parseo.
-- El detalle se descarga por bundle de forma secuencial; fallos de red devuelven `None` para ese bundle y se pierden `price_tiers/book_list/featured_image`.
-- Solo se persisten registros que pasan validación Pydantic (fechas válidas); bundles sin fechas válidas se descartan.
+- Los datos Flight son un contrato de aplicación no documentado por Humble. Cambios futuros pueden detener el ETL y requieren revisar el adaptador, no relajar sus validaciones.
+- Los detalles se descargan secuencialmente. En Next cualquier fallo aborta el scrape; en legacy el detalle puede faltar sin borrar enriquecimiento previo.
+- Todos los registros deben pasar Pydantic y tener fechas válidas. No se inventan fechas ni se anuncia éxito después de descartar registros.
+- Una caída legítima de más del 50% requiere investigación del operador; no existe un bypass automático del control de calidad.
 - Las migraciones de esquema se realizan con SQL crudo simple (`ensure_*`); no hay sistema de migraciones formal.
 
 ## Resumen de Características
@@ -326,12 +347,12 @@ El JSON bruto (`landingPage-json-data`) de la fase de extracción puede almacena
 
 - **Extracción de Detalles**: Scraping del JSON embebido (`webpack-bundle-page-data`) para obtener tiers, libros y MSRP
 - **Normalización de Datos**: Limpieza de texto, conversión de fechas, serialización JSON
-- **Validación Estricta**: Validación Pydantic con descarte de registros inválidos
+- **Validación Estricta**: Validación Pydantic y aborto seguro ante registros inválidos
 - **Mantenimiento Automático**: Limpieza de bundles expirados y actualización de columnas faltantes
 - **SQLite Local**: Base de datos local sin dependencias externas
 
 ## Próximos pasos recomendados
 
 - Añadir reintentos/backoff/paralelización al fetch de detalle.
-- Incluir pruebas con fixtures de HTML/JSON reales para detectar cambios de estructura.
+- Ampliar los fixtures reducidos de `tests/fixtures/next` al cambiar la fuente.
 - Migrar a un sistema de migraciones (Alembic) en lugar de SQL adhoc.

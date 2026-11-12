@@ -3,17 +3,19 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Iterator
 
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import and_, nulls_last, or_, select
+from sqlalchemy import nulls_last, or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from spider.config.settings import Settings, get_settings
 from spider.database.models import Bundle
 from spider.database.session import build_database_uri
 from sqlalchemy import create_engine
+
+from .availability import active_bundle_filter, bundle_is_active
 
 
 class Publisher(BaseModel):
@@ -112,7 +114,7 @@ def _books(bundle: Bundle) -> list[BookMetadata]:
     return [_book_from_record(record) for record in _as_list(bundle.book_list)]
 
 
-def _summary(bundle: Bundle) -> BundleSummary:
+def _summary(bundle: Bundle, now: datetime) -> BundleSummary:
     return BundleSummary(
         id=bundle.id,
         machine_name=bundle.machine_name,
@@ -121,13 +123,13 @@ def _summary(bundle: Bundle) -> BundleSummary:
         product_url=bundle.product_url,
         start_date=bundle.start_date_datetime,
         end_date=bundle.end_date_datetime,
-        is_active=bool(bundle.is_active and bundle.archived_at is None),
+        is_active=bundle_is_active(bundle, now),
         book_count=len(_as_list(bundle.book_list)),
     )
 
 
-def _details(bundle: Bundle, include_books: bool = True) -> BundleDetails:
-    summary = _summary(bundle)
+def _details(bundle: Bundle, now: datetime, include_books: bool = True) -> BundleDetails:
+    summary = _summary(bundle, now)
     return BundleDetails(
         **summary.model_dump(),
         tile_short_name=bundle.tile_short_name,
@@ -170,9 +172,10 @@ class BundleCatalog:
         if offset < 0:
             raise ValueError("offset must be non-negative")
 
+        now = datetime.now(timezone.utc)
         statement = select(Bundle)
         if not include_inactive:
-            statement = statement.where(Bundle.is_active.is_(True), Bundle.archived_at.is_(None))
+            statement = statement.where(active_bundle_filter(now))
         if query:
             pattern = f"%{query.strip()}%"
             statement = statement.where(
@@ -189,21 +192,23 @@ class BundleCatalog:
             Bundle.id.desc(),
         ).offset(offset).limit(limit)
         with self.session() as session:
-            return [_summary(bundle) for bundle in session.scalars(statement).all()]
+            return [_summary(bundle, now) for bundle in session.scalars(statement).all()]
 
     def get_bundle(self, identifier: str, include_books: bool = True) -> BundleDetails:
+        now = datetime.now(timezone.utc)
         with self.session() as session:
             bundle = session.get(Bundle, identifier)
             if bundle is None:
                 bundle = session.scalar(select(Bundle).where(Bundle.machine_name == identifier))
             if bundle is None:
                 raise ValueError(f"Bundle not found: {identifier}")
-            return _details(bundle, include_books=include_books)
+            return _details(bundle, now, include_books=include_books)
 
     def featured_bundle(self) -> BundleDetails:
+        now = datetime.now(timezone.utc)
         statement = (
             select(Bundle)
-            .where(Bundle.is_active.is_(True), Bundle.archived_at.is_(None))
+            .where(active_bundle_filter(now))
             .order_by(nulls_last(Bundle.msrp_total.desc()), nulls_last(Bundle.bundles_sold_decimal.desc()))
             .limit(1)
         )
@@ -211,7 +216,7 @@ class BundleCatalog:
             bundle = session.scalar(statement)
             if bundle is None:
                 raise ValueError("No active bundles stored")
-            return _details(bundle)
+            return _details(bundle, now)
 
     def search_books(
         self,
@@ -228,18 +233,16 @@ class BundleCatalog:
         if not 1 <= limit <= 100:
             raise ValueError("limit must be between 1 and 100")
 
+        now = datetime.now(timezone.utc)
         with self.session() as session:
             if bundle_identifier:
                 bundle = session.get(Bundle, bundle_identifier)
                 if bundle is None:
                     bundle_statement = select(Bundle).where(Bundle.machine_name == bundle_identifier)
                     if not include_inactive:
-                        bundle_statement = bundle_statement.where(
-                            Bundle.is_active.is_(True),
-                            Bundle.archived_at.is_(None),
-                        )
+                        bundle_statement = bundle_statement.where(active_bundle_filter(now))
                     bundle = session.scalar(bundle_statement)
-                elif not include_inactive and not (bundle.is_active and bundle.archived_at is None):
+                elif not include_inactive and not bundle_is_active(bundle, now):
                     bundle = None
                 bundles = [bundle] if bundle is not None else []
             else:
@@ -247,7 +250,7 @@ class BundleCatalog:
                     nulls_last(Bundle.end_date_datetime.desc()), Bundle.id.desc()
                 )
                 if not include_inactive:
-                    statement = statement.where(Bundle.is_active.is_(True), Bundle.archived_at.is_(None))
+                    statement = statement.where(active_bundle_filter(now))
                 bundles = list(session.scalars(statement).all())
 
         author_filter = author.casefold() if author else None
@@ -281,7 +284,7 @@ class BundleCatalog:
                         bundle_id=bundle.id,
                         bundle_machine_name=bundle.machine_name,
                         bundle_title=bundle_title,
-                        bundle_is_active=bool(bundle.is_active and bundle.archived_at is None),
+                        bundle_is_active=bundle_is_active(bundle, now),
                     )
                 )
                 if len(results) >= limit:

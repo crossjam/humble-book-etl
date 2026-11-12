@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from hashlib import sha256
 import json
-from typing import Iterable
+from typing import Iterable, Sequence
 
 import logging
 from sqlalchemy import create_engine, inspect, or_, text, update
@@ -15,6 +15,105 @@ from .models import Base, Bundle, BundleLifecycleEvent, LandingPageRawData
 from .session import build_database_uri
 
 logger = logging.getLogger(__name__)
+
+
+class ScrapeQualityError(RuntimeError):
+    """A suspicious scrape must not modify snapshots or the bundle catalog."""
+
+
+def _snapshot_product_count(payload: object) -> int | None:
+    """Count only complete, recognizable Books snapshots, not other categories."""
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except (ValueError, TypeError):
+            return None
+    if not isinstance(payload, dict):
+        return None
+    try:
+        if payload.get('format') == 'humble-next-flight-v1':
+            products = payload['products']
+            identity_key = 'productKey'
+        else:
+            mosaics = payload['data']['books']['mosaic']
+            if not isinstance(mosaics, list):
+                return None
+            products = []
+            for mosaic in mosaics:
+                group = mosaic['products']
+                if not isinstance(group, list):
+                    return None
+                products.extend(group)
+            identity_key = 'machine_name'
+    except (KeyError, IndexError, TypeError):
+        return None
+    if not isinstance(products, list) or not products:
+        return None
+    names = []
+    for product in products:
+        if not isinstance(product, dict):
+            return None
+        name = product.get(identity_key)
+        if not isinstance(name, str) or not name.strip():
+            return None
+        names.append(name.strip())
+    if len(set(names)) != len(names):
+        return None
+    return len(names)
+
+
+def validate_scrape_quality(
+    records: Sequence[BundleRecord],
+    session: Session,
+    now: datetime | None = None,
+) -> None:
+    """Fail closed on an empty scrape or a sudden loss of over half the catalog.
+
+    The latest recognizable, nonempty Books snapshot is the historical baseline.
+    Also consider currently valid active rows, so a truncated legacy snapshot
+    cannot weaken an otherwise trustworthy catalog baseline. Archived/expired
+    historical rows and unrelated/malformed snapshots are never counted.
+    This function performs reads only and must precede every persistence step.
+    """
+    count = len(records)
+    if not count:
+        raise ScrapeQualityError('Scrape returned zero bundles; refusing all database changes')
+    if any(not record.machine_name.strip() for record in records):
+        raise ScrapeQualityError('Scrape returned an empty bundle identity; refusing all database changes')
+    if len({record.machine_name for record in records}) != count:
+        raise ScrapeQualityError('Scrape returned duplicate bundles; refusing all database changes')
+
+    current_time = _utc_naive(now) if now is not None else datetime.utcnow()
+    snapshot_count = 0
+    snapshots = session.query(LandingPageRawData.json_data).filter(
+        LandingPageRawData.scraped_date <= current_time,
+    ).order_by(
+        LandingPageRawData.scraped_date.desc(),
+        LandingPageRawData.id.desc(),
+    ).yield_per(10)
+    for (payload,) in snapshots:
+        candidate = _snapshot_product_count(payload)
+        if candidate is not None:
+            snapshot_count = candidate
+            break
+
+    active_count = session.query(Bundle.id).filter(
+        Bundle.is_active.is_(True),
+        Bundle.archived_at.is_(None),
+        Bundle.start_date_datetime <= current_time,
+        Bundle.end_date_datetime > current_time,
+    ).count()
+    baseline = max(snapshot_count, active_count)
+    if count * 2 < baseline:
+        raise ScrapeQualityError(
+            f'Scrape returned {count} bundles versus baseline {baseline} '
+            f'(latest snapshot: {snapshot_count}, active catalog: {active_count}); '
+            'loss exceeds 50%; refusing all database changes'
+        )
+    logger.info(
+        'Scrape quality gate passed: %s bundles, snapshot baseline %s, active catalog %s',
+        count, snapshot_count, active_count,
+    )
 
 
 def ensure_bundle_lifecycle_event_table(engine) -> None:
@@ -168,7 +267,20 @@ def _track_existing_bundle_change(
 
 def _extract_snapshot_products(payload: dict) -> dict[str, dict]:
     products: dict[str, dict] = {}
-    for section in payload.get('data', {}).values():
+    if not isinstance(payload, dict):
+        return products
+    if payload.get('format') == 'humble-next-flight-v1':
+        raw_products = payload.get('products', [])
+        if not isinstance(raw_products, list):
+            return products
+        for product in raw_products:
+            if isinstance(product, dict) and isinstance(product.get('productKey'), str):
+                products[product['productKey']] = product
+        return products
+    data = payload.get('data', {})
+    if not isinstance(data, dict):
+        return products
+    for section in data.values():
         if not isinstance(section, dict):
             continue
         for mosaic in section.get('mosaic', []):
@@ -181,10 +293,17 @@ def _extract_snapshot_products(payload: dict) -> dict[str, dict]:
 
 
 def _snapshot_datetime(product: dict, key: str) -> datetime | None:
-    value = product.get(key)
+    aliases = {
+        'start_date|datetime': 'startDate',
+        'end_date|datetime': 'endDate',
+    }
+    value = product.get(key) or product.get(aliases.get(key, key))
     if not value:
         return None
-    parsed = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+    try:
+        parsed = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+    except (TypeError, ValueError):
+        return None
     return _utc_naive(parsed)
 
 
@@ -227,7 +346,10 @@ def backfill_lifecycle_events_from_raw_data(session: Session) -> int:
                 session,
                 machine_name=machine_name,
                 bundle_id=bundle.id if bundle else None,
-                bundle_title=product.get('tile_name') or product.get('tile_short_name'),
+                bundle_title=(
+                    product.get('tile_name') or product.get('tile_short_name')
+                    or product.get('name') or product.get('title')
+                ),
                 event_type=event_type,
                 observed_at=snapshot.scraped_date,
                 previous_start_at=previous_start_at,
@@ -237,7 +359,14 @@ def backfill_lifecycle_events_from_raw_data(session: Session) -> int:
                 source_snapshot_id=snapshot.id,
             ):
                 created += 1
-        previous_products.update(current_products)
+        # Unenriched Next listings may omit dates altogether. Such observations
+        # must not erase the last source-observed window used for later replay.
+        for machine_name, product in current_products.items():
+            previous = previous_products.setdefault(machine_name, {})
+            for key in ('start_date|datetime', 'end_date|datetime'):
+                observed_date = _snapshot_datetime(product, key)
+                if observed_date is not None:
+                    previous[key] = observed_date.isoformat()
 
     session.commit()
     logger.info('Backfilled %s bundle lifecycle events', created)
@@ -362,7 +491,7 @@ def _utc_naive(value: datetime) -> datetime:
 
 
 def _is_expired(end_date: datetime | None, now: datetime) -> bool:
-    return end_date is not None and _utc_naive(end_date) < _utc_naive(now)
+    return end_date is not None and _utc_naive(end_date) <= _utc_naive(now)
 
 
 def _is_current_payload(payload: dict, now: datetime) -> bool:
@@ -375,6 +504,29 @@ def _is_current_payload(payload: dict, now: datetime) -> bool:
         and _utc_naive(start_date) <= _utc_naive(now)
         and not _is_expired(end_date, now)
     )
+
+
+def _preserve_book_metadata(incoming: list[dict], previous: object) -> list[dict]:
+    """Fill unknown book fields without changing incoming membership or arrays."""
+    if not isinstance(previous, list):
+        return incoming
+    previous_books = {
+        book['machine_name']: book
+        for book in previous
+        if isinstance(book, dict) and isinstance(book.get('machine_name'), str)
+        and book['machine_name']
+    }
+    merged_books = []
+    for book in incoming:
+        machine_name = book.get('machine_name')
+        retained = previous_books.get(machine_name) if isinstance(machine_name, str) else None
+        merged = dict(book)
+        if retained:
+            for key, value in retained.items():
+                if merged.get(key) is None:
+                    merged[key] = value
+        merged_books.append(merged)
+    return merged_books
 
 
 def persist_bundles(
@@ -403,6 +555,21 @@ def persist_bundles(
             # Buscar si ya existe un bundle con el mismo machine_name
             existing = session.query(Bundle).filter(Bundle.machine_name == payload['machine_name']).first()
             if existing:
+                # Missing/null upstream metadata is not evidence that retained
+                # enrichment disappeared. Keep false/zero/explicit empty lists,
+                # and still refresh the generated observation timestamp.
+                supplied_fields = {
+                    '_type' if key == 'type_value' else key
+                    for key in record.model_fields_set
+                } | {'verification_date'}
+                payload = {
+                    key: value for key, value in payload.items()
+                    if key in supplied_fields and value is not None
+                }
+                if 'book_list' in payload:
+                    payload['book_list'] = _preserve_book_metadata(
+                        payload['book_list'], existing.book_list,
+                    )
                 _track_existing_bundle_change(
                     session,
                     existing,
@@ -478,7 +645,7 @@ def remove_outdated_bundles(
     """Archive expired bundles without deleting their normalized metadata."""
     current_time = _utc_naive(now) if now is not None else datetime.utcnow()
     expired = session.query(Bundle).filter(
-        Bundle.end_date_datetime < current_time,
+        Bundle.end_date_datetime <= current_time,
         or_(Bundle.is_active.is_(True), Bundle.archived_at.is_(None)),
     ).all()
 
