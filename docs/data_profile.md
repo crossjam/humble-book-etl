@@ -13,7 +13,7 @@
   - `start_date|datetime`, `end_date|datetime`, `bundles_sold|decimal`
   - `*_information.config.*` blocks (images and logos)
 - Columns with optional/missing values: `marketing_blurb`, `hover_title`, `supports_partners`, `hero_highlights`, `hover_highlights`, `author`, `tile_logo`, etc.
-- Bundle-enriched data (from `webpack-bundle-page-data` script):
+- Bundle-enriched data (from the current Next.js bundle model or legacy `webpack-bundle-page-data` script):
   - `price_tiers`: list of tiers with header, price and associated machine_names.
   - `book_list`: detail per book/comic (Humble machine name, title, authors/creators, publishers, description, formats, images, MSRP, preview metadata, and tier membership).
   - `featured_image` (bundle logo) and `msrp_total` (officially communicated sum).

@@ -35,11 +35,11 @@ def list_bundles(
     limit: int = 20,
     offset: int = 0,
 ) -> list[dict[str, Any]]:
-    """List active bundles, optionally searching bundle metadata.
+    """List bundles currently on sale with known start/end dates in UTC.
 
     Args:
         query: Case-insensitive text to match against bundle metadata.
-        include_inactive: Include retained inactive bundles when true.
+        include_inactive: Also include archived, expired, future, or unknown-date bundles.
         limit: Maximum number of bundles to return, from 1 through 100.
         offset: Number of matching bundles to skip.
     """

@@ -141,13 +141,14 @@ def test_api_pagination_can_use_a_fixed_snapshot(engine):
 
 
 def test_api_list_supports_bounded_offset_pagination(engine):
-    now = datetime(2026, 9, 3, 12, 0)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     with Session(engine) as session:
         session.add_all([
             Bundle(
                 id=f"active-{index}",
                 machine_name=f"active-{index}",
                 is_active=True,
+                start_date_datetime=now - timedelta(days=1),
                 end_date_datetime=now + timedelta(days=index + 1),
             )
             for index in range(3)
@@ -167,10 +168,16 @@ def test_api_list_supports_bounded_offset_pagination(engine):
 
 
 def test_api_list_defaults_to_active_bundles(engine):
-    now = datetime(2026, 9, 3, 12, 0)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     with Session(engine) as session:
         session.add_all([
-            Bundle(id="active", machine_name="active", is_active=True, end_date_datetime=now + timedelta(days=1)),
+            Bundle(
+                id="active",
+                machine_name="active",
+                is_active=True,
+                start_date_datetime=now - timedelta(days=1),
+                end_date_datetime=now + timedelta(days=1),
+            ),
             Bundle(
                 id="archived",
                 machine_name="archived",
@@ -195,13 +202,14 @@ def test_api_list_defaults_to_active_bundles(engine):
 
 
 def test_api_featured_excludes_archived_bundles(engine):
-    now = datetime(2026, 9, 3, 12, 0)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     with Session(engine) as session:
         session.add_all([
             Bundle(
                 id="active",
                 machine_name="active",
                 is_active=True,
+                start_date_datetime=now - timedelta(days=1),
                 end_date_datetime=now + timedelta(days=1),
                 msrp_total=10,
             ),

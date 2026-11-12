@@ -11,6 +11,12 @@ from bs4 import BeautifulSoup
 from pydantic import ValidationError
 
 from ..scrapers.bundle_detail_scraper import BundleDetailScraper
+from ..scrapers.next_page import (
+    FORMAT as NEXT_FORMAT,
+    listing_products,
+    normalize_listing_product,
+    parse_next_page,
+)
 from ..schemas.bundle import BundleRecord
 from ..schemas.raw_data import LandingPageRawDataRecord
 from ..utils.transformers import (
@@ -89,18 +95,32 @@ class HumbleSpider:
         Raises:
             HumbleSpiderError: Si hay un error al obtener o procesar los datos.
         """
+        self._last_raw_payload = None
         payload = self._fetch_raw_payload()
-        self._last_raw_payload = payload
         products = self._extract_products(payload)
-        frame = self._normalize_products(products)
-        return self._to_records(frame)
+        is_next = payload.get('format') == NEXT_FORMAT
+        try:
+            frame = self._normalize_products(products)
+            records = self._to_records(frame, require_details=is_next)
+        except (TypeError, ValueError, AttributeError, RecursionError) as exc:
+            raise HumbleSpiderError(f'No se pudo normalizar el catálogo: {exc}') from exc
+        if is_next:
+            # Retain actual detail dates alongside the untouched Flight stream,
+            # so lifecycle replay has the same window as the persisted record.
+            by_key = {record.machine_name: record for record in records}
+            for product in payload['products']:
+                record = by_key[product['productKey']]
+                product['startDate'] = record.start_date_datetime.isoformat()
+                product['endDate'] = record.end_date_datetime.isoformat()
+        self._last_raw_payload = payload
+        return records
 
     def get_raw_data_record(self) -> Optional[LandingPageRawDataRecord]:
         """
         Obtiene el raw data record del último payload obtenido.
 
-        Crea un LandingPageRawDataRecord con el JSON raw del último
-        landingPage-json-data obtenido, incluyendo hash y metadata.
+        Crea un LandingPageRawDataRecord con el último payload exitoso
+        (legacy o Flight), incluyendo hash, versión y metadata.
 
         Returns:
             LandingPageRawDataRecord con el JSON y metadata, o None si
@@ -118,15 +138,14 @@ class HumbleSpider:
             json_data=self._last_raw_payload,
             source_url=self.URL,
             json_hash=json_hash,
-            json_version=None,  # Se puede agregar lógica para detectar versión si es necesario
+            json_version=self._last_raw_payload.get('format', 'humble-landing-v1'),
         )
 
     def _fetch_raw_payload(self) -> Dict:
         """
         Obtiene el payload JSON crudo desde la página de Humble Bundle.
 
-        Realiza una petición HTTP a la página de libros y extrae el JSON
-        embebido en el script con id 'landingPage-json-data'.
+        Detecta el JSON legacy o los frames Flight embebidos en el listado.
 
         Returns:
             Diccionario con los datos JSON extraídos de la página.
@@ -145,10 +164,24 @@ class HumbleSpider:
 
         soup = BeautifulSoup(response.text, 'html.parser')
         script_tag = soup.select_one(f'script#{self.SCRIPT_ID}')
-        if not script_tag or not script_tag.string:
+        if script_tag and script_tag.string:
+            try:
+                payload = json.loads(script_tag.string)
+                if not isinstance(payload, dict):
+                    raise ValueError('El payload no es un objeto')
+                return payload
+            except (ValueError, TypeError, RecursionError) as exc:
+                raise HumbleSpiderError('JSON inválido en el listado legacy') from exc
+        try:
+            page = parse_next_page(response.text)
+            return {
+                'format': NEXT_FORMAT,
+                'flight': page.flight,
+                'products': listing_products(page),
+            }
+        except (ValueError, TypeError, KeyError, RecursionError) as exc:
             raise HumbleSpiderError(
-                'No se encontró el script con los datos esperados')
-        return json.loads(script_tag.string)
+                f'No se pudo interpretar el listado de Humble Bundle: {exc}') from exc
 
     def _extract_products(self, payload: Dict) -> List[Dict]:
         """
@@ -164,8 +197,21 @@ class HumbleSpider:
             HumbleSpiderError: Si la estructura del JSON no es la esperada.
         """
         try:
-            return payload['data']['books']['mosaic'][0]['products']
-        except (KeyError, IndexError, TypeError) as exc:
+            if payload.get('format') == NEXT_FORMAT:
+                products = [normalize_listing_product(p) for p in payload['products']]
+            else:
+                products = [
+                    product
+                    for mosaic in payload['data']['books']['mosaic']
+                    for product in mosaic['products']
+                ]
+            if not products or any(not isinstance(p, dict) for p in products):
+                raise ValueError('El catálogo está vacío o contiene productos inválidos')
+            keys = [p.get('machine_name') for p in products]
+            if any(not key for key in keys) or len(set(keys)) != len(keys):
+                raise ValueError('Identidades de bundle ausentes o duplicadas')
+            return products
+        except (KeyError, IndexError, TypeError, ValueError) as exc:
             raise HumbleSpiderError(
                 'Estructura JSON inesperada al obtener productos') from exc
 
@@ -224,7 +270,7 @@ class HumbleSpider:
 
         return frame
 
-    def _to_records(self, frame: pd.DataFrame) -> List[BundleRecord]:
+    def _to_records(self, frame: pd.DataFrame, *, require_details: bool = False) -> List[BundleRecord]:
         """
         Convierte el DataFrame en una lista de BundleRecord validados.
 
@@ -236,34 +282,51 @@ class HumbleSpider:
             frame: DataFrame con productos normalizados.
 
         Returns:
-            Lista de BundleRecord validados. Los registros que no pasan la
-            validación se descartan y se registra un warning.
+            Lista de BundleRecord validados. Un registro inválido aborta
+            el scrape antes de persistir.
         """
         if frame.empty:
             return []
         records: List[BundleRecord] = []
-        discarded = 0
+        # pandas represents absent optional values as NaN/NaT; neither should
+        # become a value supplied to Pydantic or replace stored metadata.
+        frame = frame.astype(object).where(pd.notna(frame), None)
         for item in frame.to_dict(orient='records'):
             machine_name = item.get('machine_name')
             detail = self.detail_scraper.fetch_bundle_details(item.get('product_url'))
+            if require_details and detail is None:
+                raise HumbleSpiderError(f'Detalle incompleto para {machine_name}; no se guardó el catálogo')
             if detail:
                 item['price_tiers'] = detail.price_tiers
                 item['book_list'] = detail.book_list
                 item['msrp_total'] = detail.msrp_total
                 # Guardar HTML raw para tests
                 item['raw_html'] = detail.raw_html
+                for field in ('featured_image', 'tile_logo', 'marketing_blurb'):
+                    value = getattr(detail, field, None)
+                    if value is not None:
+                        item[field] = value
+                for field, source in (
+                    ('start_date|datetime', 'start_date'),
+                    ('end_date|datetime', 'end_date'),
+                ):
+                    value = getattr(detail, source, None)
+                    if value is not None:
+                        item[field] = pd.to_datetime(value, utc=True, errors='coerce')
                 # tile_logo ya viene del JSON inicial, pero verificar que esté normalizado
                 if 'tile_logo' in item and item['tile_logo']:
                     item['tile_logo'] = absolute_url(item['tile_logo'])
                     logger.debug('tile_logo extraído para %s: %s', machine_name, item.get('tile_logo'))
             try:
+                start = item.get('start_date|datetime')
+                end = item.get('end_date|datetime')
+                if start is None or end is None or pd.isna(start) or pd.isna(end) or start >= end:
+                    raise ValueError('Fechas ausentes, inválidas o invertidas')
+                item['duration_days'] = compute_duration_days(start, end)
+                item['is_active'] = compute_is_active(start, end)
                 record = BundleRecord.model_validate(item)
-            except ValidationError as exc:
-                discarded += 1
-                logger.warning('Registro descartado %s: %s',
-                               item.get('machine_name'), exc)
-                continue
+            except (ValidationError, ValueError) as exc:
+                raise HumbleSpiderError(
+                    f'Bundle inválido {machine_name}; no se guardó el catálogo: {exc}') from exc
             records.append(record)
-        if discarded:
-            logger.info('Descartados %s registros por validación', discarded)
         return records

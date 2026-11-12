@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastmcp import Client
@@ -20,6 +20,7 @@ BOOK_MACHINE_NAME = "example-book"
 
 
 def _catalog(tmp_path: Path) -> BundleCatalog:
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     db_path = tmp_path / "catalog.db"
     settings = Settings(db_type="sqlite", db_path=str(db_path))
     engine = create_engine(f"sqlite:///{db_path}", future=True)
@@ -32,9 +33,9 @@ def _catalog(tmp_path: Path) -> BundleCatalog:
                 tile_name="Example Book Bundle",
                 category="bundle",
                 product_url="https://example.test/bundle",
-                start_date_datetime=datetime(2026, 9, 1),
-                end_date_datetime=datetime(2026, 10, 1),
-                verification_date=datetime(2026, 9, 20),
+                start_date_datetime=now - timedelta(days=1),
+                end_date_datetime=now + timedelta(days=1),
+                verification_date=now,
                 is_active=True,
                 book_list=[
                     {

@@ -1,6 +1,7 @@
 import json
 
 import httpx
+import pytest
 
 from spider.scrapers.bundle_detail_scraper import BundleDetailScraper
 
@@ -107,3 +108,25 @@ def test_extract_book_list_uses_empty_detail_collections_when_absent():
     assert books[0]['description'] is None
     assert books[0]['image'] is None
     assert books[0]['detail_image'] is None
+
+
+@pytest.mark.parametrize('payload', [
+    {},
+    {'bundleData': []},
+    {'bundleData': {}},
+    {'bundleData': {'tier_item_data': []}},
+    {'bundleData': {'tier_item_data': {'book': None}}},
+    {'bundleData': {'tier_item_data': {'book': {}}, 'basic_data': []}},
+])
+def test_fetch_bundle_details_rejects_empty_or_malformed_legacy_data(payload, caplog):
+    html = (
+        '<script id="webpack-bundle-page-data" type="application/json">'
+        f'{json.dumps(payload)}</script>'
+    )
+    with httpx.Client(transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, text=html)
+    )) as client:
+        details = BundleDetailScraper(client).fetch_bundle_details('/books/example')
+
+    assert details is None
+    assert caplog.records

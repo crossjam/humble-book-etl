@@ -232,14 +232,18 @@ make etl
 Flow:
 
 1. Downloads `https://www.humblebundle.com/books`.
-2. Extracts `script#landingPage-json-data`.
+2. Detects the current embedded Next.js Flight catalog, with the legacy `landingPage-json-data` parser retained for compatibility.
 3. Normalizes products with pandas.
 4. Converts dates, URLs, JSON lists, and derived metrics.
-5. Visits each bundle page and reads `webpack-bundle-page-data`.
+5. Visits each bundle page and reads the matching Next.js bundle model (or legacy `webpack-bundle-page-data`).
 6. Extracts tiers and detailed per-title metadata (authors/creators, publishers, descriptions, formats, and images), total MSRP, and raw HTML.
-7. Validates records with Pydantic.
+7. Validates every record with Pydantic and rejects incomplete runs. Before any snapshot or catalog writes, rejects empty/duplicate results or a catalog count loss greater than 50% against the latest usable snapshot/current catalog.
 8. Archives expired bundles without deleting their metadata.
 9. Persists append-only lifecycle events when a known bundle is extended, renewed, shortened, or reactivated.
+
+Unknown/null metadata does not erase retained enrichment. See
+[the Next.js source migration](docs/humble-nextjs-migration.md) for parser boundaries,
+offline fixtures, operational safeguards, and rollout checks.
 
 ## API
 
@@ -248,7 +252,7 @@ The FastAPI metadata for this release is `1.0.2`. This is a breaking API release
 Public endpoints:
 
 - `GET /health`: service status.
-- `GET /bundles`: active bundles ordered by closing date. Existing calls return the full active collection; optional `limit` (maximum 1000) and `offset` (default 0) enable bounded paging.
+- `GET /bundles`: active bundles ordered by closing date. Discovery also requires known dates with `start <= UTC now < end`, so stale active flags cannot expose expired bundles after a scrape failure. Existing calls return the full active collection; optional `limit` (maximum 1000) and `offset` (default 0) enable bounded paging.
 - `GET /bundles?include_inactive=true`: includes retained inactive bundles, including expired/archived and other non-current records. This opt-in view defaults to 100 records per page; pass `limit`, one fixed `snapshot_at` UTC timestamp, and the returned page’s `(before_end_date, before_id)` cursor for subsequent pages.
 - `GET /bundles/{bundle_id}`: bundle by UUID, including retained inactive bundles when the UUID is known.
 - `GET /bundles/by-machine-name/{machine_name}`: bundle by `machine_name`, including retained inactive bundles.
@@ -407,7 +411,7 @@ Current tables:
 - `bundle`: normalized metadata, dates, active state, tiers, books, images,
   MSRP, and raw HTML.
 - `bundle_lifecycle_event`: append-only observed schedule changes with previous/new windows and source snapshot provenance.
-- `landing_page_raw_data`: snapshots of `landingPage-json-data`, date, source
+- `landing_page_raw_data`: versioned listing snapshots (legacy JSON or embedded Next.js Flight plus extracted products), date, source
   URL, hash, and optional version.
 - `user`: authentication users with `username`, `email`, `password_hash`, and
   `created_at`.

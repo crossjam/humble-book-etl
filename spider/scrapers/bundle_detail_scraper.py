@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Dict, List, Optional
+from urllib.parse import unquote, urlsplit
 
 import httpx
 from bs4 import BeautifulSoup
+
+from .next_page import parse_next_page
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +23,11 @@ class BundleDetails:
     book_list: List[Dict[str, Any]]
     msrp_total: Optional[float]
     raw_html: Optional[str] = None  # HTML raw del bundle
+    start_date: str | datetime | None = None
+    end_date: str | datetime | None = None
+    featured_image: Optional[str] = None
+    tile_logo: Optional[str] = None
+    marketing_blurb: Optional[str] = None
 
 
 class BundleDetailScraper:
@@ -81,25 +91,41 @@ class BundleDetailScraper:
         
         soup = BeautifulSoup(response.text, 'html.parser')
         script = soup.find('script', id='webpack-bundle-page-data', type='application/json')
-        if not script or not script.string:
-            logger.warning('Script webpack-bundle-page-data no encontrado para %s', product_path)
+        if script is None:
+            return self._extract_next_details(raw_html, product_path)
+        if not script.string:
+            logger.warning('Script webpack-bundle-page-data vacío para %s', product_path)
             return None
 
         try:
             data = json.loads(script.string)
             bundle_data = data['bundleData']
-        except (json.JSONDecodeError, KeyError) as exc:
+            if not isinstance(bundle_data, dict):
+                raise ValueError('bundleData no es un objeto')
+        except (ValueError, KeyError, TypeError) as exc:
             logger.warning('JSON inválido en detalle %s: %s', product_path, exc)
             return None
         
         tier_pricing = bundle_data.get('tier_pricing_data', {})
         tier_display = bundle_data.get('tier_display_data', {})
         tier_items = bundle_data.get('tier_item_data', {})
+        if (
+            not all(isinstance(value, dict) for value in (tier_pricing, tier_display, tier_items))
+            or not tier_items
+            or not all(isinstance(value, dict) for value in tier_items.values())
+            or not all(isinstance(value, dict) for value in tier_pricing.values())
+            or not all(isinstance(value, dict) for value in tier_display.values())
+        ):
+            logger.warning('Datos de tiers/libros inválidos o vacíos para %s', product_path)
+            return None
         
         price_tiers = self._extract_price_tiers(tier_pricing, tier_display)
         book_list = self._extract_book_list(tier_items, tier_display)
         
         basic_data = bundle_data.get('basic_data', {})
+        if not isinstance(basic_data, dict):
+            logger.warning('Metadatos básicos inválidos para %s', product_path)
+            return None
         msrp_total = self._safe_amount(basic_data.get('msrp|money'))
         
         return BundleDetails(
@@ -108,6 +134,140 @@ class BundleDetailScraper:
             msrp_total=msrp_total,
             raw_html=raw_html,
         )
+
+    def _extract_next_details(
+        self, raw_html: str, product_path: str
+    ) -> Optional[BundleDetails]:
+        """Adapt the public Next.js model; never infer dates or item identities."""
+        try:
+            page = parse_next_page(raw_html)
+            slug = unquote(urlsplit(product_path).path.rstrip('/').rsplit('/', 1)[-1])
+            bundle = None
+            for obj in page.objects():
+                if not {'startDate', 'endDate', 'tiers', 'slug'}.issubset(obj):
+                    continue
+                # Recommendation objects can coexist with the requested bundle.
+                if page.resolve(obj['slug']) == slug:
+                    bundle = page.resolve(obj)
+                    break
+            if bundle is None:
+                raise ValueError('No se encontró el detalle del slug solicitado')
+            for field in ('startDate', 'endDate'):
+                value = bundle.get(field)
+                if not isinstance(value, str) or not value:
+                    raise ValueError('Fechas de detalle ausentes o inválidas')
+                parsed_date = datetime.fromisoformat(value)
+                if parsed_date.tzinfo is None or parsed_date.utcoffset() is None:
+                    raise ValueError('Fecha de detalle sin zona horaria')
+            source_tiers = bundle['tiers']
+            if not isinstance(source_tiers, list) or not source_tiers:
+                raise ValueError('Tiers ausentes o inválidos')
+            price_tiers = []
+            books: Dict[str, Dict[str, Any]] = {}
+            tier_ids = set()
+            for tier in source_tiers:
+                if not isinstance(tier, dict):
+                    raise ValueError('Tier no es un objeto')
+                # SKU is a source-provided stable identifier, not a slug-derived ID.
+                identifier = tier.get('sku') or tier.get('id')
+                if not isinstance(identifier, (str, int)) or isinstance(identifier, bool):
+                    raise ValueError('Tier sin identificador')
+                identifier = str(identifier)
+                if not identifier or identifier in tier_ids:
+                    raise ValueError('Identificador de tier vacío o duplicado')
+                tier_ids.add(identifier)
+                price = self._normalize_money(tier.get('price'))
+                currency = price.get('currency') if price else None
+                if (
+                    price is None
+                    or price['amount'] < 0
+                    or not isinstance(currency, str)
+                    or len(currency) != 3
+                    or not currency.isascii()
+                    or not currency.isalpha()
+                ):
+                    raise ValueError('Precio de tier ausente o inválido')
+                items = tier.get('bundleItems')
+                if not isinstance(items, list) or not items:
+                    raise ValueError('Libros de tier ausentes o inválidos')
+                machines = []
+                for item in items:
+                    if not isinstance(item, dict):
+                        raise ValueError('Libro de tier no es un objeto')
+                    machine = item.get('key')
+                    if not isinstance(machine, str) or not machine.strip():
+                        raise ValueError('Libro sin clave estable')
+                    title = item.get('title')
+                    if not isinstance(title, str) or not title.strip():
+                        raise ValueError('Libro sin título')
+                    if machine not in machines:
+                        machines.append(machine)
+                    if machine not in books:
+                        books[machine] = self._next_book(item)
+                    membership = books[machine]['tiers']
+                    if identifier not in membership:
+                        membership.append(identifier)
+                price_tiers.append({
+                    'identifier': identifier,
+                    'price': price,
+                    'average_purchase_price': self._normalize_money(
+                        tier.get('averagePurchasePrice')
+                    ),
+                    'is_initial': tier.get('isInitialTier'),
+                    'header': tier.get('header'),
+                    'items': machines,
+                })
+            total_items = bundle.get('totalItems')
+            if total_items is not None and (
+                type(total_items) is not int or total_items != len(books)
+            ):
+                raise ValueError('Cantidad total de libros no coincide con el detalle')
+            return BundleDetails(
+                price_tiers=price_tiers,
+                book_list=list(books.values()),
+                msrp_total=self._safe_amount(bundle.get('value')),
+                raw_html=raw_html,
+                start_date=bundle['startDate'],
+                end_date=bundle['endDate'],
+                featured_image=bundle.get('thumbnailImageUrl'),
+                tile_logo=bundle.get('logoImageUrl'),
+                marketing_blurb=self._plain_text(bundle.get('headline')),
+            )
+        except (ValueError, KeyError, TypeError, IndexError, RecursionError) as exc:
+            logger.warning('Detalle Next.js inválido para %s: %s', product_path, exc)
+            return None
+
+    def _next_book(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        developers = item.get('developers')
+        source_publishers = item.get('publishers')
+        platforms = item.get('platforms')
+        for entries in (developers, source_publishers, platforms):
+            if entries is not None and not isinstance(entries, list):
+                raise ValueError('Metadatos de libro deben ser listas o null')
+        formats = list(dict.fromkeys(
+            value for value in platforms if isinstance(value, str)
+        )) if platforms is not None else None
+        publishers = [
+            {'publisher-name': publisher.get('name'), 'publisher-url': publisher.get('url')}
+            for publisher in (source_publishers or [])
+            if isinstance(publisher, dict)
+        ]
+        preview = item.get('previewPdf')
+        return {
+            'machine_name': item['key'],
+            'title': item.get('title'),
+            # null means unavailable metadata; [] is an authoritative empty list.
+            'authors': self._extract_people(developers, 'name') if developers is not None else None,
+            'publishers': self._extract_publishers(publishers) if source_publishers is not None else None,
+            'description': self._plain_text(item.get('description')),
+            'msrp': self._safe_amount(item.get('msrp')),
+            'preview': preview if isinstance(preview, dict) else None,
+            'image': item.get('thumbnailImageUrl'),
+            'detail_image': None,
+            'content_type': item.get('bundleType'),
+            'formats': formats,
+            'tiers': [],
+        }
 
     @staticmethod
     def _extract_price_tiers(pricing, display) -> List[Dict[str, Any]]:
@@ -238,13 +398,30 @@ class BundleDetailScraper:
         Returns:
             Valor numérico como float o None si no se puede extraer
         """
-        if not value:
+        money = BundleDetailScraper._normalize_money(value)
+        return money['amount'] if money else None
+
+    @staticmethod
+    def _normalize_money(value: Any) -> Optional[Dict[str, Any]]:
+        """`amount` is already major units; only `centAmount` needs scaling."""
+        if not isinstance(value, dict):
             return None
-        amount = value.get('amount')
-        if isinstance(amount, (int, float)):
-            return float(amount)
+        amount = value.get('amount', value.get('centAmount'))
+        if isinstance(amount, bool):
+            return None
         try:
-            return float(amount)
-        except (TypeError, ValueError):
+            amount = float(amount)
+            if 'amount' not in value and 'centAmount' in value:
+                digits = value.get('fractionDigits', 2)
+                if isinstance(digits, bool) or not isinstance(digits, int) or not 0 <= digits <= 9:
+                    return None
+                amount /= 10 ** digits
+            if not math.isfinite(amount):
+                return None
+            return {
+                'amount': amount,
+                'currency': value.get('currency') or value.get('currencyCode'),
+            }
+        except (TypeError, ValueError, OverflowError):
             return None
 

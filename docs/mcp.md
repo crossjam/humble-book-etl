@@ -58,6 +58,11 @@ formats, and pricing tiers. There is no first-class `Book` SQL table or
 explicit ISBN field in the current data model; ISBN-like information may only
 appear in source publisher URLs or descriptions.
 
+Active discovery uses the same UTC availability guard as the API:
+stored active, unarchived, and known dates satisfying `start <= now < end`.
+Unknown schedules, future bundles, and expired records require `include_inactive`;
+known-ID detail tools/resources remain available and report computed activity.
+
 ## Resources
 
 - `hbetl://catalog`: compact active-bundle catalog.

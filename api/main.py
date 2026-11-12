@@ -36,15 +36,18 @@ from jose import JWTError
 
 from spider.database.session import get_session_factory as build_session_factory
 from spider.database.persistence import (
+    ScrapeQualityError,
     persist_bundles,
     remove_outdated_bundles,
     persist_landing_page_raw_data,
+    validate_scrape_quality,
 )
 from spider.core.spider import HumbleSpider
 from spider.core.errors import HumbleSpiderError
 from spider.database.models import Bundle, BundleLifecycleEvent, LandingPageRawData, User
 from spider.config.settings import get_settings
 from spider.database.seed import ensure_admin_user
+from hbetl_mcp.availability import active_bundle_filter
 from hbetl_mcp.server import mcp
 
 logger = logging.getLogger(__name__)
@@ -297,11 +300,9 @@ async def healthcheck():
 
 @app.get('/bundles/featured', response_model=BundleResponse, tags=['bundles'])
 async def get_featured_bundle(db: AsyncSession = Depends(get_async_db)):
+    """Feature only bundles with a known sale period containing the current UTC time."""
     result = await db.execute(
-        select(Bundle).where(
-            Bundle.is_active.is_(True),
-            Bundle.archived_at.is_(None),
-        ).order_by(
+        select(Bundle).where(active_bundle_filter(datetime.now(timezone.utc))).order_by(
             nulls_last(Bundle.msrp_total.desc()),
             nulls_last(Bundle.bundles_sold_decimal.desc()),
         ).limit(1)
@@ -315,7 +316,9 @@ async def get_featured_bundle(db: AsyncSession = Depends(get_async_db)):
 
 @app.get('/bundles', response_model=list[BundleResponse], tags=['bundles'])
 async def list_bundles(
-    include_inactive: Annotated[bool, Query(description='Include archived/inactive bundles')] = False,
+    include_inactive: Annotated[
+        bool, Query(description='Include archived, expired, future, and unknown-date bundles')
+    ] = False,
     limit: Annotated[int | None, Query(ge=1, le=1000, description='Maximum bundles to return')] = None,
     offset: Annotated[int, Query(ge=0, description='Number of bundles to skip')] = 0,
     snapshot_at: Annotated[datetime | None, Query(description='Fixed UTC snapshot boundary')] = None,
@@ -324,12 +327,10 @@ async def list_bundles(
     db: AsyncSession = Depends(get_async_db),
     response: Response = None,
 ):
+    """List currently on-sale bundles; incomplete schedules require include_inactive."""
     statement = select(Bundle)
     if not include_inactive:
-        statement = statement.where(
-            Bundle.is_active.is_(True),
-            Bundle.archived_at.is_(None),
-        )
+        statement = statement.where(active_bundle_filter(datetime.now(timezone.utc)))
     provided_snapshot = snapshot_at is not None
     if include_inactive and offset > 0:
         raise HTTPException(
@@ -461,18 +462,18 @@ async def list_bundle_history(
     offset: Annotated[int, Query(ge=0)] = 0,
     db: AsyncSession = Depends(get_async_db),
 ):
-    """Return closed inactive bundle rows and lifecycle events in one history view."""
+    """Return ended bundles (even stale active flags) and closed lifecycle events."""
     now_db = datetime.now(timezone.utc).replace(tzinfo=None)
     inactive_result = await db.execute(
         select(Bundle).where(
-            and_(
-                or_(
-                    Bundle.is_active.is_(False),
-                    Bundle.archived_at.is_not(None),
-                ),
-                or_(
+            or_(
+                Bundle.end_date_datetime <= now_db,
+                and_(
                     Bundle.end_date_datetime.is_(None),
-                    Bundle.end_date_datetime <= now_db,
+                    or_(
+                        Bundle.is_active.is_(False),
+                        Bundle.archived_at.is_not(None),
+                    ),
                 ),
             )
         )
@@ -602,11 +603,17 @@ def trigger_etl(
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
+    observed_at = raw_data_record.scraped_date if raw_data_record else None
+    try:
+        validate_scrape_quality(records, db, now=observed_at)
+    except ScrapeQualityError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
     raw_data = None
     if raw_data_record:
         raw_data = persist_landing_page_raw_data(raw_data_record, db)
 
-    observed_at = raw_data_record.scraped_date if raw_data_record else None
     remove_outdated_bundles(db, now=observed_at)
     persist_bundles(
         records,

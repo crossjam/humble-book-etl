@@ -128,7 +128,7 @@ def compute_is_active(start: Optional[datetime], end: Optional[datetime], now: O
     Determina si un bundle está activo en un momento dado.
     
     Un bundle está activo si la fecha/hora actual está entre la fecha
-    de inicio y la fecha de fin (inclusive).
+    de inicio (inclusive) y la fecha de fin (exclusive).
     
     Args:
         start: Fecha de inicio del bundle. Puede ser None.
@@ -143,7 +143,7 @@ def compute_is_active(start: Optional[datetime], end: Optional[datetime], now: O
     now = now or datetime.now(timezone.utc)
     if not start or not end:
         return False
-    return start <= now <= end
+    return start <= now < end
 
 
 def normalize_columns(frame, columns: Iterable[str]):
