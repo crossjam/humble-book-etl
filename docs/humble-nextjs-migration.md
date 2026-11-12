@@ -40,6 +40,11 @@ dependency, browser automation, credential, or new Humble API dependency.
 
 The detail adapter matches the requested slug, not unrelated recommendations.
 Books are deduplicated across cumulative tiers while retaining every membership.
+Every occurrence is validated before deduplication. Author entries need usable
+names; publisher entries need a nonempty name or URL (and valid string values
+for either supplied field); format entries must be nonempty strings. Malformed
+members, including mixed valid/invalid lists, reject the entire detail rather
+than being filtered into destructive empty-list replacements.
 Missing optional metadata stays unknown rather than being invented. No fake
 start date is substituted for the listing's missing date.
 
@@ -90,7 +95,10 @@ Run offline tests from the repository root:
 `tests/fixtures/next/README.md` documents the reduced public-page captures.
 Tests cover split frames, Unicode byte lengths, reference paths/cycles, malformed
 pages, both source formats, missing details, pricing, catalog quality,
-retained enrichment, lifecycle replay and read-time expiration.
+retained enrichment, malformed collection members, lifecycle replay and read-time
+expiration. API ETL regressions also prove invalid metadata returns HTTP 502
+without changing retained book metadata, verification time, lifecycle flags,
+or stored snapshots.
 
 Before deployment, back up the SQLite database, then do a live **read-only**
 fetch with `HumbleSpider.fetch_bundles()` and inspect counts, IDs, dates, tiers

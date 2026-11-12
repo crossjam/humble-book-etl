@@ -202,8 +202,11 @@ class BundleDetailScraper:
                         raise ValueError('Libro sin título')
                     if machine not in machines:
                         machines.append(machine)
+                    # Validate every occurrence before deduplication: a later
+                    # cumulative tier must not hide malformed source metadata.
+                    normalized_book = self._next_book(item)
                     if machine not in books:
-                        books[machine] = self._next_book(item)
+                        books[machine] = normalized_book
                     membership = books[machine]['tiers']
                     if identifier not in membership:
                         membership.append(identifier)
@@ -244,14 +247,36 @@ class BundleDetailScraper:
         for entries in (developers, source_publishers, platforms):
             if entries is not None and not isinstance(entries, list):
                 raise ValueError('Metadatos de libro deben ser listas o null')
-        formats = list(dict.fromkeys(
-            value for value in platforms if isinstance(value, str)
-        )) if platforms is not None else None
-        publishers = [
-            {'publisher-name': publisher.get('name'), 'publisher-url': publisher.get('url')}
-            for publisher in (source_publishers or [])
-            if isinstance(publisher, dict)
-        ]
+        # Nonempty invalid lists are not explicit empties. Silently filtering
+        # their members could erase retained enrichment during an upsert.
+        for developer in developers or []:
+            name = developer.get('name') if isinstance(developer, dict) else None
+            if not isinstance(name, str) or not any(part.strip() for part in name.split(',')):
+                raise ValueError('Creador de libro sin nombre válido')
+
+        publishers = []
+        for publisher in source_publishers or []:
+            if not isinstance(publisher, dict):
+                raise ValueError('Editorial de libro debe ser un objeto')
+            normalized = {}
+            for key in ('name', 'url'):
+                value = publisher.get(key)
+                if value is not None:
+                    if not isinstance(value, str) or not value.strip():
+                        raise ValueError('Nombre o URL de editorial inválido')
+                    value = value.strip()
+                normalized[f'publisher-{key}'] = value
+            if not any(normalized.values()):
+                raise ValueError('Editorial de libro sin nombre ni URL')
+            publishers.append(normalized)
+
+        formats = None if platforms is None else []
+        for platform in platforms or []:
+            if not isinstance(platform, str) or not platform.strip():
+                raise ValueError('Formato de libro debe ser texto no vacío')
+            platform = platform.strip()
+            if platform not in formats:
+                formats.append(platform)
         preview = item.get('previewPdf')
         return {
             'machine_name': item['key'],

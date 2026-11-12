@@ -267,6 +267,140 @@ def test_next_details_distinguish_absent_collections_from_explicit_empty(value):
         assert details.book_list[1][key] is None
 
 
+@pytest.mark.parametrize(('field', 'members'), [
+    ('developers', [{}]),
+    ('developers', [None]),
+    ('developers', ['Author']),
+    ('developers', [{'name': None}]),
+    ('developers', [{'name': 123}]),
+    ('developers', [{'name': '   '}]),
+    ('developers', [{'name': ', ,'}]),
+    ('developers', [{'name': 'Valid Author'}, {}]),
+    ('publishers', [None]),
+    ('publishers', [{}]),
+    ('publishers', ['Publisher']),
+    ('publishers', [{'name': 123}]),
+    ('publishers', [{'name': '   '}]),
+    ('publishers', [{'url': 123}]),
+    ('publishers', [{'name': 'Valid Press', 'url': False}]),
+    ('publishers', [{'name': 'Valid Press'}, None]),
+    ('platforms', [123]),
+    ('platforms', [None]),
+    ('platforms', [{}]),
+    ('platforms', ['']),
+    ('platforms', ['   ']),
+    ('platforms', ['pdf', 123]),
+])
+def test_next_details_reject_malformed_collection_members(field, members, caplog):
+    bundle = next_bundle()
+    bundle['tiers'][0]['bundleItems'][0][field] = members
+    assert fetch(flight_html(bundle)) is None
+    assert 'Detalle Next.js inválido' in caplog.text
+
+
+@pytest.mark.parametrize(('field', 'members'), [
+    ('developers', [{}]), ('publishers', [None]), ('platforms', [123]),
+])
+def test_next_details_validate_repeated_books_in_later_tiers(field, members):
+    bundle = next_bundle()
+    repeated = copy.deepcopy(bundle['tiers'][0]['bundleItems'][0])
+    repeated[field] = members
+    bundle['tiers'][1]['bundleItems'][1] = repeated
+    assert fetch(flight_html(bundle)) is None
+
+
+def test_next_details_preserve_meaningful_publisher_and_format_values():
+    bundle = next_bundle()
+    item = bundle['tiers'][0]['bundleItems'][0]
+    item['developers'] = [{'name': '  Author One , Author Two  '}]
+    item['publishers'] = [
+        {'name': '  Named Press  ', 'url': None},
+        {'url': ' https://example.com/press '},
+    ]
+    item['platforms'] = [' pdf ', 'epub', 'pdf']
+    details = fetch(flight_html(bundle))
+
+    assert details is not None
+    book = details.book_list[0]
+    assert book['authors'] == ['Author One', 'Author Two']
+    assert book['publishers'] == [
+        {'name': 'Named Press', 'url': None},
+        {'name': None, 'url': 'https://example.com/press'},
+    ]
+    assert book['formats'] == ['pdf', 'epub']
+
+
+@pytest.mark.parametrize(('field', 'members'), [
+    ('developers', [{}]), ('publishers', [None]), ('platforms', [123]),
+    ('developers', [{'name': 'Valid Author'}, {}]),
+    ('publishers', [{'name': 'Valid Press'}, None]),
+    ('platforms', ['pdf', 123]),
+])
+def test_invalid_metadata_aborts_api_etl_without_clearing_retained_values(
+    field, members, tmp_path, monkeypatch,
+):
+    from datetime import datetime, timedelta, timezone
+    from pathlib import Path
+
+    from fastapi import HTTPException
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+
+    import api.main as api
+    from spider.core.spider import HumbleSpider
+    from spider.database.models import (
+        Base, Bundle, BundleLifecycleEvent, LandingPageRawData, User,
+    )
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    retained_metadata = [{
+        'machine_name': FIRST_KEY,
+        'title': 'Retained book',
+        'authors': ['Retained Author'],
+        'publishers': [{'name': 'Retained Press', 'url': 'https://example.com/press'}],
+        'formats': ['pdf'],
+    }]
+    engine = create_engine(f'sqlite:///{tmp_path / "metadata.db"}')
+    Base.metadata.create_all(engine)
+    bundle = next_bundle()
+    bundle['tiers'][0]['bundleItems'][0][field] = members
+    listing = (Path(__file__).parent / 'fixtures' / 'next' / 'books.html').read_text()
+
+    def respond(request):
+        html = listing if request.url.path == '/books' else flight_html(bundle)
+        return httpx.Response(200, text=html)
+
+    try:
+        with Session(engine) as session, httpx.Client(transport=httpx.MockTransport(respond)) as client:
+            # An expired stale-true row also proves cleanup never ran.
+            retained = Bundle(
+                machine_name='datascienceoreilly_bookbundle',
+                start_date_datetime=now - timedelta(days=2),
+                end_date_datetime=now - timedelta(days=1),
+                verification_date=now - timedelta(hours=1),
+                is_active=True,
+                book_list=retained_metadata,
+            )
+            session.add(retained)
+            session.commit()
+            before_verified = retained.verification_date
+            monkeypatch.setattr(api, 'HumbleSpider', lambda: HumbleSpider(client))
+
+            with pytest.raises(HTTPException) as failure:
+                api.trigger_etl(db=session, current_user=User(id='test-operator'))
+            assert failure.value.status_code == 502
+            session.expire_all()
+            assert retained.book_list == retained_metadata
+            assert retained.verification_date == before_verified
+            assert retained.is_active is True
+            assert retained.archived_at is None
+            assert session.query(Bundle).count() == 1
+            assert session.query(LandingPageRawData).count() == 0
+            assert session.query(BundleLifecycleEvent).count() == 0
+    finally:
+        engine.dispose()
+
+
 def test_next_details_allow_zero_price_and_explicit_date_offsets():
     bundle = next_bundle()
     bundle['startDate'] = '2026-10-26T14:00:00-04:00'

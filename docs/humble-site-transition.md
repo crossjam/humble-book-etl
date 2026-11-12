@@ -65,6 +65,8 @@ deployment time**.
    before snapshot/archive/upsert writes.
 3. Unknown/null metadata does not erase existing enrichment. Explicit empty
    lists remain meaningful; removed books are not restored by metadata merging.
+   Malformed members in nonempty author/publisher/format lists fail the scrape,
+   rather than being filtered into empty lists that could erase saved values.
 4. API and MCP discovery require active, unarchived records with known dates
    satisfying **`start <= UTC now < end`**, independently of scrape freshness.
    Retained records remain accessible through opt-in/known-ID paths.
@@ -80,7 +82,7 @@ fresh website listing.
 | Live read-only scrape | 20 bundles, 642 book entries; all 20 bundle IDs already known |
 | Independent direct-page expiration checks | 20/20 exact timestamps matched |
 | Replay on a disposable database copy | All 66 rows and existing IDs preserved; expired Robotics archived |
-| Offline regression suite, locally and with production runtime dependencies | 207 tests passed, including a real-HTTP API/MCP test |
+| Offline regression suite, locally and with production runtime dependencies | 239 tests passed, including real-HTTP API/MCP and malformed-metadata ETL regressions |
 | Updated Docker image, real HTTP, direct and nginx proxy | 106 checks passed; all five MCP tools and four resource reads worked |
 | Full retained-catalog detail sweep, direct and proxied | All 66 bundle responses serialized 2,166 book entries consistently across API/MCP |
 | API/MCP consistency on that copy | Same 21 active / 66 retained bundles; expected retained-catalog behavior |
