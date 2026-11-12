@@ -1,5 +1,8 @@
 # Humble source adapter migration (2026-11-12)
 
+For the incident, rationale and verification results in two minutes, start with
+[the developer brief](humble-site-transition.md).
+
 Humble's public books listing and bundle pages now embed Next.js Flight model
 data instead of the old `landingPage-json-data` / `webpack-bundle-page-data`
 JSON scripts. Changing a selector alone is insufficient.

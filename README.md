@@ -242,7 +242,8 @@ Flow:
 9. Persists append-only lifecycle events when a known bundle is extended, renewed, shortened, or reactivated.
 
 Unknown/null metadata does not erase retained enrichment. See
-[the Next.js source migration](docs/humble-nextjs-migration.md) for parser boundaries,
+[the two-minute transition brief](docs/humble-site-transition.md) for what changed
+and why, or [the Next.js source migration](docs/humble-nextjs-migration.md) for parser boundaries,
 offline fixtures, operational safeguards, and rollout checks.
 
 ## API
