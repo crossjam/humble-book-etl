@@ -16,6 +16,68 @@ def flight_html(stream):
     return '<script>self.__next_f.push(' + json.dumps([1, stream]) + ')</script>'
 
 
+def frame_script(frame, *, initialize=False):
+    target = '(self.__next_f=self.__next_f||[])' if initialize else 'self.__next_f'
+    return '<script>' + target + '.push(' + json.dumps(frame) + ')</script>'
+
+
+def test_supported_bootstrap_and_split_text_frames_preserve_only_text_data():
+    html = (
+        frame_script([0], initialize=True)
+        + frame_script([1, 'a:{"ok":'])
+        + frame_script([1, 'true}\n'])
+    )
+    page = parse_next_page(html)
+    assert page.flight == 'a:{"ok":true}\n'
+    assert page.rows == {'a': {'ok': True}}
+
+
+@pytest.mark.parametrize('channel', [2, 3, 99, -1])
+@pytest.mark.parametrize('position', ['before', 'between', 'after'])
+@pytest.mark.parametrize('initialize', [False, True])
+def test_unsupported_channels_fail_even_alongside_valid_text(
+    channel, position, initialize,
+):
+    frames = [frame_script([1, 'a:{"ok":']), frame_script([1, 'true}\n'])]
+    index = {'before': 0, 'between': 1, 'after': 2}[position]
+    frames.insert(index, frame_script(
+        [channel, 'b:{"feedItems":[{"value":{"productKey":"otherwise-lost"}}]}\n'],
+        initialize=initialize,
+    ))
+    with pytest.raises(ValueError, match='Unsupported Next.js Flight channel'):
+        parse_next_page(''.join(frames))
+
+
+@pytest.mark.parametrize('frame', [
+    [],
+    {},
+    'not a frame',
+    [True, 'b:{}\n'],
+    [False],
+    [1.0, 'b:{}\n'],
+    [0.0],
+    ['1', 'b:{}\n'],
+    [None, 'b:{}\n'],
+    [[], 'b:{}\n'],
+    [{}, 'b:{}\n'],
+    [0, None],
+    [0, 'b:{"feedItems":[]}\n'],
+    [1],
+    [1, None],
+    [1, 'b:{}\n', 'extra'],
+])
+@pytest.mark.parametrize('initialize', [False, True])
+def test_malformed_channels_fail_even_when_valid_text_is_present(frame, initialize):
+    html = flight_html('a:{"ok":true}\n') + frame_script(frame, initialize=initialize)
+    with pytest.raises(ValueError, match='Invalid Next.js Flight'):
+        parse_next_page(html)
+
+
+def test_control_frames_alone_do_not_make_a_successful_page():
+    with pytest.raises(ValueError, match='No Next.js Flight data'):
+        parse_next_page(frame_script([0]))
+
+
 def test_reduced_captured_feed_maps_stable_keys_not_slug():
     page = parse_next_page((FIXTURES / 'books.html').read_text())
     products = listing_products(page)

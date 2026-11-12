@@ -59,7 +59,9 @@ deployment time**.
 
 1. A Next-format run needs valid details for every bundle. Invalid identities,
    schedules, prices, or records stop the scrape instead of silently dropping
-   rows and announcing success.
+   rows and announcing success. Only the observed bootstrap (`0`) and text (`1`)
+   Flight channels are accepted; unknown channels fail even if channel `1`
+   still contains a plausible partial catalog.
 2. Both ETL entry points reject empty/duplicate results or a catalog count loss
    **greater than 50%** against the trusted snapshot/current-catalog baseline,
    before snapshot/archive/upsert writes.
@@ -82,7 +84,7 @@ fresh website listing.
 | Live read-only scrape | 20 bundles, 642 book entries; all 20 bundle IDs already known |
 | Independent direct-page expiration checks | 20/20 exact timestamps matched |
 | Replay on a disposable database copy | All 66 rows and existing IDs preserved; expired Robotics archived |
-| Offline regression suite, locally and with production runtime dependencies | 239 tests passed, including real-HTTP API/MCP and malformed-metadata ETL regressions |
+| Offline regression suite, locally and with production runtime dependencies | 301 tests passed, including real-HTTP API/MCP and channel/metadata ETL regressions |
 | Updated Docker image, real HTTP, direct and nginx proxy | 106 checks passed; all five MCP tools and four resource reads worked |
 | Full retained-catalog detail sweep, direct and proxied | All 66 bundle responses serialized 2,166 book entries consistently across API/MCP |
 | API/MCP consistency on that copy | Same 21 active / 66 retained bundles; expected retained-catalog behavior |

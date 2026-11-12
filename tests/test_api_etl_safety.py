@@ -1,14 +1,19 @@
-"""The authenticated API ETL must use the same pre-write quality gate as CLI."""
+"""API and CLI ETL reject unsafe source data before persistence."""
 
+import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest.mock import Mock
 
+import httpx
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 import api.main as api
+from spider.cli import run_spider
+from spider.core.spider import HumbleSpider
 from spider.database.models import Base, Bundle, LandingPageRawData, User
 from spider.schemas.bundle import BundleRecord
 from spider.schemas.raw_data import LandingPageRawDataRecord
@@ -139,3 +144,71 @@ def test_api_success_validates_before_snapshot_archive_and_upsert(
         assert expired.is_active is False
         assert expired.archived_at is not None
         assert session.query(Bundle).count() == 6
+
+
+@pytest.mark.parametrize("entrypoint", ["api", "cli"])
+@pytest.mark.parametrize("page_kind", ["listing", "detail"])
+def test_unsupported_channel_aborts_real_scrape_before_every_etl_write(
+    engine, monkeypatch, entrypoint, page_kind,
+):
+    fixtures = Path(__file__).parent / "fixtures" / "next"
+    pages = {
+        "listing": (fixtures / "books.html").read_text(),
+        "detail": (fixtures / "bundle.html").read_text(),
+    }
+    pages[page_kind] += (
+        "<script>self.__next_f.push("
+        + json.dumps([99, 'b:{"feedItems":[]}\n'])
+        + ")</script>"
+    )
+    metadata = [{"machine_name": "retained-book", "authors": ["Saved Author"]}]
+    with Session(engine) as session:
+        # A one-item feed would pass quality validation if the extra channel
+        # were ignored; rejection must come from the source parser itself.
+        session.query(LandingPageRawData).one().json_data = _snapshot(1)
+        retained = session.query(Bundle).one()
+        retained.book_list = metadata
+        retained.verification_date = NOW - timedelta(hours=1)
+        session.commit()
+
+    def respond(request):
+        kind = "listing" if request.url.path == "/books" else "detail"
+        return httpx.Response(200, text=pages[kind])
+
+    target = api if entrypoint == "api" else run_spider
+    writes = []
+    for operation in WRITE_OPERATIONS:
+        spy = Mock(wraps=getattr(target, operation))
+        monkeypatch.setattr(target, operation, spy)
+        writes.append(spy)
+
+    expected = (
+        "Unsupported Next.js Flight channel"
+        if page_kind == "listing" else "Detalle incompleto"
+    )
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        monkeypatch.setattr(target, "HumbleSpider", lambda: HumbleSpider(client))
+        if entrypoint == "api":
+            with Session(engine) as session:
+                with pytest.raises(HTTPException) as failure:
+                    api.trigger_etl(db=session, current_user=User(id="operator"))
+                assert failure.value.status_code == 502
+                assert expected in failure.value.detail
+        else:
+            monkeypatch.setattr(run_spider, "get_settings", Mock())
+            session_factory = Mock()
+            monkeypatch.setattr(run_spider, "get_session_factory", session_factory)
+            with pytest.raises(SystemExit, match=expected):
+                run_spider.main()
+            session_factory.assert_not_called()
+
+    for spy in writes:
+        spy.assert_not_called()
+    with Session(engine) as session:
+        assert session.query(LandingPageRawData).one().id == "trusted-snapshot"
+        retained = session.query(Bundle).one()
+        assert retained.id == "expired"
+        assert retained.book_list == metadata
+        assert retained.verification_date == NOW - timedelta(hours=1)
+        assert retained.is_active is True
+        assert retained.archived_at is None

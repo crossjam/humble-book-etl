@@ -14,7 +14,11 @@ from typing import Any, Iterator
 from bs4 import BeautifulSoup
 
 FORMAT = 'humble-next-flight-v1'
-_PUSH = re.compile(r'self\.__next_f\.push\(\s*')
+# Validate the initializer's push as well as subsequent direct pushes.
+_PUSH = re.compile(
+    r'(?:self\.__next_f|\(\s*self\.__next_f\s*=\s*self\.__next_f\s*\|\|\s*\[\s*\]\s*\))'
+    r'\.push\(\s*'
+)
 _HEADER = re.compile(rb'([0-9a-f]*):')
 _REFERENCE = re.compile(r'^\$([0-9a-f]+)((?::[^:]+)*)$')
 _MAX_HTML_CHARS = 10_000_000
@@ -92,7 +96,7 @@ class NextPage:
 
 
 def parse_next_page(html: str) -> NextPage:
-    """Join channel-1 frames, then decode JSON and byte-counted text rows."""
+    """Accept bootstrap 0 and text 1 only; reject other channels before decoding."""
     if len(html) > _MAX_HTML_CHARS:
         raise ValueError('Next.js page exceeds source size budget')
     frames = []
@@ -112,12 +116,21 @@ def parse_next_page(html: str) -> NextPage:
                 raise ValueError('Non-JSON Next.js Flight frame')
             # Do not search for push() text inside the JSON we just consumed.
             offset = end + 1
-            if not isinstance(frame, list) or not frame:
+            if (
+                not isinstance(frame, list)
+                or not frame
+                or type(frame[0]) is not int
+            ):
                 raise ValueError('Invalid Next.js Flight channel')
-            if frame[0] == 1:
+            if frame[0] == 0:
+                if len(frame) != 1:
+                    raise ValueError('Invalid Next.js Flight bootstrap channel')
+            elif frame[0] == 1:
                 if len(frame) != 2 or not isinstance(frame[1], str):
                     raise ValueError('Invalid Next.js Flight text channel')
                 frames.append(frame[1])
+            else:
+                raise ValueError(f'Unsupported Next.js Flight channel: {frame[0]}')
     if not frames:
         raise ValueError('No Next.js Flight data found')
 

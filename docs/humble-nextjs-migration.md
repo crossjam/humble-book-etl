@@ -12,6 +12,11 @@ JSON scripts. Changing a selector alone is insufficient.
 `spider/scrapers/next_page.py` is a deliberately limited, versioned adapter:
 
 * Extract JSON arguments to `self.__next_f.push`, without executing JavaScript.
+  Recognize the observed `(self.__next_f=self.__next_f||[]).push` initializer too.
+  Only integer channel `0` with exactly `[0]` (bootstrap) and channel `1` with
+  exactly `[1, string]` (text data) are supported. Reject all other channels,
+  noninteger IDs, and malformed control/data frames, even alongside valid
+  channel-1 data; never accept a partial feed by silently skipping a channel.
 * Join channel-1 frames before parsing. Record boundaries need not match scripts.
 * Decode JSON model rows and UTF-8 **byte-counted** `T` text rows. Skip known
   framework hints/imports/control metadata; reject unknown record framing.
@@ -93,12 +98,17 @@ Run offline tests from the repository root:
 ```
 
 `tests/fixtures/next/README.md` documents the reduced public-page captures.
-Tests cover split frames, Unicode byte lengths, reference paths/cycles, malformed
-pages, both source formats, missing details, pricing, catalog quality,
+Tests cover split frames, unsupported channels/control shapes, Unicode byte
+lengths, reference paths/cycles, malformed pages, both source formats, missing
+details, pricing, catalog quality,
 retained enrichment, malformed collection members, lifecycle replay and read-time
 expiration. API ETL regressions also prove invalid metadata returns HTTP 502
 without changing retained book metadata, verification time, lifecycle flags,
 or stored snapshots.
+
+Real-parser API and CLI regressions also inject an unsupported channel into an
+otherwise valid listing or detail page and verify rejection before any ETL write,
+even when the partial channel-1 catalog would pass the count-loss quality gate.
 
 Before deployment, back up the SQLite database, then do a live **read-only**
 fetch with `HumbleSpider.fetch_bundles()` and inspect counts, IDs, dates, tiers
