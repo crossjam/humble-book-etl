@@ -1,11 +1,11 @@
 export interface PriceTier {
   identifier: string;
-  header?: string;
-  is_initial?: boolean;
+  header?: string | null;
+  is_initial?: boolean | null;
   price?: {
     currency: string;
     amount: number;
-  };
+  } | null;
   items?: string[];
 }
 

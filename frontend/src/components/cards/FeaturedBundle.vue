@@ -12,13 +12,13 @@
         <p class="eyebrow">{{ $t('featured.eyebrow') }}</p>
         <h2>{{ bundle.tile_name }}</h2>
         <p class="msrp">{{ $t('featured.estimatedMsrp') }} ${{ bundle.msrp_total ?? "—" }}</p>
-        <div class="chip-group">
+        <div v-if="displayTiers.length" class="chip-group">
           <span
-            v-for="tier in bundle.price_tiers?.slice(0, 3)"
+            v-for="tier in displayTiers"
             :key="tier.identifier"
             class="chip"
           >
-            {{ tier.header }}
+            {{ tier.label }}
           </span>
         </div>
         <a
@@ -43,11 +43,28 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from "vue";
+import { useI18n } from "vue-i18n";
 import type { Bundle } from "@/types/bundle";
+import { priceTierLabel } from "@/utils/priceTierLabel";
 
-defineProps<{
+const props = defineProps<{
   bundle: Bundle | null;
 }>();
+
+const { locale } = useI18n();
+const displayTiers = computed(() =>
+  (props.bundle?.price_tiers ?? [])
+    .slice(0, 3)
+    .map((tier) => ({
+      identifier: tier.identifier,
+      label: priceTierLabel(tier, locale.value),
+    }))
+    .filter(
+      (tier): tier is { identifier: string; label: string } =>
+        Boolean(tier.label),
+    ),
+);
 
 // Obtener URL de imagen directamente desde Humble Bundle
 // Las URLs vienen completas desde el backend, no necesitan construcción adicional

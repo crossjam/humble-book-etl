@@ -34,9 +34,9 @@
         </span>
       </p>
       <p class="msrp">MSRP: ${{ bundle.msrp_total ?? "—" }}</p>
-      <div class="tiers" v-if="bundle.price_tiers?.length">
-        <span v-for="tier in bundle.price_tiers.slice(0, 2)" :key="tier.identifier">
-          {{ tier.header }}
+      <div class="tiers" v-if="displayTiers.length">
+        <span v-for="tier in displayTiers" :key="tier.identifier">
+          {{ tier.label }}
         </span>
       </div>
       <a class="link" :href="bundle.product_url" target="_blank" rel="noopener" @click.stop>
@@ -63,6 +63,7 @@ import {
   formatDate as formatDateValue,
   getBundleEndingStatus,
 } from "@/utils/dateFormatter";
+import { priceTierLabel } from "@/utils/priceTierLabel";
 
 const props = defineProps<{ bundle: Bundle }>();
 
@@ -70,6 +71,18 @@ const { locale } = useI18n();
 const showModal = ref(false);
 const endingStatus = computed(() =>
   getBundleEndingStatus(props.bundle.end_date_datetime),
+);
+const displayTiers = computed(() =>
+  (props.bundle.price_tiers ?? [])
+    .slice(0, 2)
+    .map((tier) => ({
+      identifier: tier.identifier,
+      label: priceTierLabel(tier, locale.value),
+    }))
+    .filter(
+      (tier): tier is { identifier: string; label: string } =>
+        Boolean(tier.label),
+    ),
 );
 
 const openModal = () => {
