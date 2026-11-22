@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from urllib.parse import unquote, urlsplit
@@ -28,6 +28,7 @@ class BundleDetails:
     featured_image: Optional[str] = None
     tile_logo: Optional[str] = None
     marketing_blurb: Optional[str] = None
+    scrape_warnings: Optional[List[Dict[str, Any]]] = None
 
 
 class BundleDetailScraper:
@@ -229,10 +230,29 @@ class BundleDetailScraper:
                     'items': machines,
                 })
             total_items = bundle.get('totalItems')
-            if total_items is not None and (
-                type(total_items) is not int or total_items != len(books)
-            ):
-                raise ValueError('Cantidad total de libros no coincide con el detalle')
+            scrape_warnings = None
+            if total_items is not None:
+                if type(total_items) is not int or total_items < 1:
+                    raise ValueError('Cantidad total de libros inválida')
+                scrape_warnings = []
+                overcount = len(books) - total_items
+                if overcount < 0:
+                    raise ValueError(
+                        'Cantidad total de libros superior al detalle: '
+                        f'reported={total_items}, parsed={len(books)}'
+                    )
+                if overcount > 3:
+                    raise ValueError(
+                        'Cantidad total de libros excede el detalle por más de '
+                        f'3: reported={total_items}, parsed={len(books)}'
+                    )
+                if overcount:
+                    scrape_warnings.append({
+                        'code': 'total_items_overcount',
+                        'reported': total_items,
+                        'parsed': len(books),
+                        'excess': overcount,
+                    })
             return BundleDetails(
                 price_tiers=price_tiers,
                 book_list=list(books.values()),
@@ -243,6 +263,7 @@ class BundleDetailScraper:
                 featured_image=bundle.get('thumbnailImageUrl'),
                 tile_logo=bundle.get('logoImageUrl'),
                 marketing_blurb=self._plain_text(bundle.get('headline')),
+                scrape_warnings=scrape_warnings,
             )
         except (ValueError, KeyError, TypeError, IndexError, RecursionError) as exc:
             self.last_error = str(exc)

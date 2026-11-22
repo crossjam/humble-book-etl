@@ -37,6 +37,7 @@ from jose import JWTError
 from spider.database.session import get_session_factory as build_session_factory
 from spider.database.persistence import (
     ScrapeQualityError,
+    get_detail_warning_bundle_ids,
     get_observed_bundle_count,
     get_skipped_bundle_ids,
     persist_bundles,
@@ -607,6 +608,7 @@ def trigger_etl(
 
     observed_at = raw_data_record.scraped_date if raw_data_record else None
     skipped_bundle_ids = get_skipped_bundle_ids(raw_data_record)
+    warning_bundle_ids = get_detail_warning_bundle_ids(raw_data_record)
     try:
         bundles_seen = get_observed_bundle_count(
             records, raw_data_record, skipped_bundle_ids,
@@ -642,6 +644,8 @@ def trigger_etl(
         bundles_seen=bundles_seen,
         bundles_skipped=len(skipped_bundle_ids),
         skipped_bundle_ids=skipped_bundle_ids,
+        bundles_warned=len(warning_bundle_ids),
+        warning_bundle_ids=warning_bundle_ids,
     )
 
 

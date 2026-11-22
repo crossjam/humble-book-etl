@@ -12,6 +12,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 import api.main as api
+from api.schemas import BundleResponse
 from spider.cli import run_spider
 from spider.core.spider import HumbleSpider
 from spider.database.models import Base, Bundle, LandingPageRawData, User
@@ -41,23 +42,34 @@ def _next_listing(products):
     return "<script>self.__next_f.push(" + json.dumps([1, stream]) + ")</script>"
 
 
-def _next_detail(slug, *, total_items=1):
+def _next_detail(
+    slug, *, total_items=1, extra_items=0, include_total_items=True,
+):
     start = (NOW - timedelta(days=1)).replace(tzinfo=timezone.utc).isoformat()
     end = (NOW + timedelta(days=14)).replace(tzinfo=timezone.utc).isoformat()
+    bundle_items = [{
+        "key": f"{slug}_book",
+        "title": f"{slug} Book",
+    }]
+    bundle_items.extend(
+        {
+            "key": f"{slug}_extra_{index}",
+            "title": f"{slug} Extra Book {index}",
+        }
+        for index in range(extra_items)
+    )
     bundle = {
         "slug": slug,
         "startDate": start,
         "endDate": end,
-        "totalItems": total_items,
         "tiers": [{
             "sku": f"{slug}_initial",
             "price": {"amount": 5, "currencyCode": "USD"},
-            "bundleItems": [{
-                "key": f"{slug}_book",
-                "title": f"{slug} Book",
-            }],
+            "bundleItems": bundle_items,
         }],
     }
+    if include_total_items:
+        bundle["totalItems"] = total_items
     stream = "a:" + json.dumps(bundle) + "\n"
     return "<script>self.__next_f.push(" + json.dumps([1, stream]) + ")</script>"
 
@@ -294,6 +306,12 @@ def test_one_invalid_next_detail_does_not_block_other_bundle_updates(
                 "authors": ["Saved Author"],
             }],
             price_tiers=[{"identifier": "saved-tier"}],
+            scrape_warnings=[{
+                "code": "total_items_overcount",
+                "reported": 24,
+                "parsed": 25,
+                "excess": 1,
+            }],
         )
         session.add(retained_failed_bundle)
         session.commit()
@@ -335,6 +353,12 @@ def test_one_invalid_next_detail_does_not_block_other_bundle_updates(
         assert retained.tile_name == "Previously stored Foraging bundle"
         assert retained.book_list[0]["title"] == "Saved Foraging Title"
         assert retained.price_tiers == [{"identifier": "saved-tier"}]
+        assert retained.scrape_warnings == [{
+            "code": "total_items_overcount",
+            "reported": 24,
+            "parsed": 25,
+            "excess": 1,
+        }]
         assert retained.verification_date == NOW - timedelta(hours=2)
         assert retained.is_active is True
         assert retained.archived_at is None
@@ -360,3 +384,137 @@ def test_one_invalid_next_detail_does_not_block_other_bundle_updates(
         assert expired.is_active is False
         assert expired.archived_at is not None
         assert session.query(LandingPageRawData).count() == 2
+
+
+@pytest.mark.parametrize("entrypoint", ["api", "cli"])
+def test_small_detail_overcount_is_ingested_reported_and_logged(
+    engine, monkeypatch, entrypoint, caplog, capsys,
+):
+    fixtures = Path(__file__).parent / "fixtures" / "next"
+    source = listing_products(
+        parse_next_page((fixtures / "books.html").read_text())
+    )[0]
+    slug = source["url"].rstrip("/").rsplit("/", 1)[-1]
+    listing = _next_listing([source])
+    detail = _next_detail(slug, total_items=1, extra_items=1)
+
+    with Session(engine) as session:
+        trusted = session.query(LandingPageRawData).one()
+        trusted.json_data = {
+            "format": "humble-next-flight-v1",
+            "products": [{"productKey": source["productKey"]}],
+        }
+        trusted.scraped_date = NOW - timedelta(hours=1)
+        session.commit()
+
+    def respond(request):
+        if request.url.path == "/books":
+            return httpx.Response(200, text=listing)
+        if request.url.path == source["url"]:
+            return httpx.Response(200, text=detail)
+        raise AssertionError(f"Unexpected request: {request.url}")
+
+    target = api if entrypoint == "api" else run_spider
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        monkeypatch.setattr(target, "HumbleSpider", lambda: HumbleSpider(client))
+        if entrypoint == "api":
+            with Session(engine) as session:
+                result = api.trigger_etl(
+                    db=session,
+                    current_user=User(id="operator"),
+                )
+            assert result.bundles_processed == 1
+            assert result.bundles_warned == 1
+            assert result.warning_bundle_ids == [source["productKey"]]
+        else:
+            monkeypatch.setattr(run_spider, "get_settings", Mock())
+            monkeypatch.setattr(
+                run_spider,
+                "get_session_factory",
+                lambda settings: sessionmaker(bind=engine),
+            )
+            run_spider.main()
+            assert "Discrepancias toleradas (1)" in capsys.readouterr().out
+
+        with Session(engine) as session:
+            stored = session.query(Bundle).filter_by(
+                machine_name=source["productKey"],
+            ).one()
+            warning = {
+                "code": "total_items_overcount",
+                "reported": 1,
+                "parsed": 2,
+                "excess": 1,
+            }
+            assert stored.scrape_warnings == [warning]
+            assert BundleResponse.model_validate(stored).scrape_warnings == [warning]
+            snapshot = session.query(LandingPageRawData).order_by(
+                LandingPageRawData.scraped_date.desc(),
+            ).first()
+            assert snapshot.json_data["detail_warnings"] == [
+                {"machine_name": source["productKey"], **warning}
+            ]
+
+        # An unavailable item count cannot verify or clear a previous warning.
+        detail = _next_detail(slug, include_total_items=False)
+        if entrypoint == "api":
+            with Session(engine) as session:
+                unverified_result = api.trigger_etl(
+                    db=session,
+                    current_user=User(id="operator"),
+                )
+            assert unverified_result.bundles_warned == 0
+            assert unverified_result.warning_bundle_ids == []
+        else:
+            run_spider.main()
+            assert "Discrepancias toleradas" not in capsys.readouterr().out
+
+        with Session(engine) as session:
+            stored = session.query(Bundle).filter_by(
+                machine_name=source["productKey"],
+            ).one()
+            unverified_warning = {
+                **warning,
+                "status": "unverified",
+                "current_parsed": 1,
+            }
+            assert stored.scrape_warnings == [unverified_warning]
+            assert BundleResponse.model_validate(
+                stored,
+            ).scrape_warnings == [unverified_warning]
+            snapshot = session.query(LandingPageRawData).order_by(
+                LandingPageRawData.scraped_date.desc(),
+            ).first()
+            assert "detail_warnings" not in snapshot.json_data
+
+        # A matching positive count is authoritative and clears the warning.
+        detail = _next_detail(slug, total_items=1)
+        if entrypoint == "api":
+            with Session(engine) as session:
+                clean_result = api.trigger_etl(
+                    db=session,
+                    current_user=User(id="operator"),
+                )
+            assert clean_result.bundles_warned == 0
+            assert clean_result.warning_bundle_ids == []
+        else:
+            run_spider.main()
+            assert "Discrepancias toleradas" not in capsys.readouterr().out
+
+    assert source["productKey"] in caplog.text
+    with Session(engine) as session:
+        stored = session.query(Bundle).filter_by(
+            machine_name=source["productKey"],
+        ).one()
+        warning = {
+            "code": "total_items_overcount",
+            "reported": 1,
+            "parsed": 2,
+            "excess": 1,
+        }
+        assert stored.scrape_warnings == []
+        assert BundleResponse.model_validate(stored).scrape_warnings == []
+        snapshot = session.query(LandingPageRawData).order_by(
+            LandingPageRawData.scraped_date.desc(),
+        ).first()
+        assert "detail_warnings" not in snapshot.json_data

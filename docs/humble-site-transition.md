@@ -63,6 +63,9 @@ deployment time**.
    left untouched, and the failure is recorded in the raw snapshot and ETL
    result. Expiration cleanup also leaves quarantined IDs alone for that run.
    Only the observed bootstrap (`0`) and text (`1`) Flight channels are accepted.
+   A parsed book-key count that exceeds positive `totalItems` by at most three
+   is accepted with a per-bundle warning; undercounts and larger overcounts
+   remain quarantined.
 2. Both ETL entry points reject empty/duplicate results or a catalog count loss
    **greater than 50%** against the trusted snapshot/current-catalog baseline,
    before snapshot/archive/upsert writes. Catalog loss is measured using
@@ -80,6 +83,27 @@ deployment time**.
 Absence from a listing alone does **not** delete or archive a bundle. A retained,
 nonexpired bundle can therefore make the database catalog count differ from a
 fresh website listing.
+
+Accepted item-count discrepancies are logged, retained in raw snapshot
+`detail_warnings`, and persisted as `bundle.scrape_warnings`. API/MCP bundle
+responses expose them; featured and regular cards show a localized, accessible
+warning badge with reported and parsed counts. A later clean detail clears the
+badge only after a matching positive count is confirmed. Missing/null counts or
+legacy details leave it intact; refreshed titles show the last-verified counts
+separately from the current parsed count until Humble provides a verifiable
+total again. Existing databases receive the JSON column through the startup
+schema check.
+
+### Follow-up observation — November 22, 2026
+
+A read-only detail fetch for the Foraging bundle reported `totalItems=24`, while
+the adapter found 25 distinct item keys across tiers. Two differently keyed
+entries shared the title “Camping and Woodcraft,” consistent with a
+bundle-specific alias rather than a missing feed. A disposable-database ingest
+therefore retained 22 healthy records and quarantined that one bundle pending
+the correction. The new 1–3 overcount tolerance records this observed mismatch
+as a warning; it does not relax undercount or larger-overcount failures. The
+follow-up changes remain on PR #6 and have not been deployed.
 
 ## Evidence, not just unit tests
 
@@ -110,7 +134,8 @@ credentials, not a production deployment.
 
 Before rollout: **back up the database**, run tests and a read-only source
 check, deploy the reviewed image, then explicitly run write-enabled ETL and
-check discovery/history. No schema or frontend migration is required.
+check discovery/history. The startup check adds the warning column to existing
+databases; no manual migration is required.
 `python -m spider.cli.run_spider` and `POST /etl/run` are **not dry runs**.
 
 On the next source change, capture a failing response, update the isolated

@@ -36,19 +36,27 @@ def next_listing_html(products):
     return '<script>self.__next_f.push(' + json.dumps([1, stream]) + ')</script>'
 
 
-def next_detail_html(slug):
+def next_detail_html(slug, *, total_items=1, extra_items=0):
+    bundle_items = [{
+        'key': f'{slug}_book',
+        'title': f'{slug} Book',
+    }]
+    bundle_items.extend(
+        {
+            'key': f'{slug}_extra_{index}',
+            'title': f'{slug} Extra Book {index}',
+        }
+        for index in range(extra_items)
+    )
     bundle = {
         'slug': slug,
         'startDate': '2026-11-01T00:00:00Z',
         'endDate': '2026-12-01T00:00:00Z',
-        'totalItems': 1,
+        'totalItems': total_items,
         'tiers': [{
             'sku': f'{slug}_initial',
             'price': {'amount': 5, 'currencyCode': 'USD'},
-            'bundleItems': [{
-                'key': f'{slug}_book',
-                'title': f'{slug} Book',
-            }],
+            'bundleItems': bundle_items,
         }],
     }
     stream = 'a:' + json.dumps(bundle) + '\n'
@@ -112,6 +120,29 @@ def test_legacy_listing_still_works_and_missing_details_stay_unset():
     assert 'book_list' not in records[0].model_fields_set
     assert records[0].end_date_datetime.month == 12
     assert raw.json_version == 'humble-landing-v1'
+
+
+def test_next_detail_warning_is_kept_with_a_legacy_listing_snapshot():
+    records, raw = run_spider(
+        legacy_listing([legacy_product()]),
+        next_detail_html('example', total_items=1, extra_items=1),
+    )
+
+    assert len(records) == 1
+    assert records[0].scrape_warnings == [{
+        'code': 'total_items_overcount',
+        'reported': 1,
+        'parsed': 2,
+        'excess': 1,
+    }]
+    assert raw.json_version == 'humble-landing-v1'
+    assert raw.json_data['detail_warnings'] == [{
+        'machine_name': 'example_bookbundle',
+        'code': 'total_items_overcount',
+        'reported': 1,
+        'parsed': 2,
+        'excess': 1,
+    }]
 
 
 def test_legacy_multiple_mosaics_are_not_silently_truncated():

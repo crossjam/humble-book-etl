@@ -73,6 +73,7 @@ class HumbleSpider:
         self.detail_scraper = BundleDetailScraper(self.session)
         self._last_raw_payload: Optional[Dict] = None
         self._detail_failures: List[Dict[str, str]] = []
+        self._detail_warnings: List[Dict] = []
 
     def close(self) -> None:
         if self._owns_session:
@@ -99,6 +100,7 @@ class HumbleSpider:
         """
         self._last_raw_payload = None
         self._detail_failures = []
+        self._detail_warnings = []
         payload = self._fetch_raw_payload()
         products = self._extract_products(payload)
         is_next = payload.get('format') == NEXT_FORMAT
@@ -128,6 +130,10 @@ class HumbleSpider:
                 product['endDate'] = record.end_date_datetime.isoformat()
             if self._detail_failures:
                 payload['detail_failures'] = self.detail_failures
+        if self._detail_warnings:
+            # Detail pages can already be on the Next format while the listing
+            # is still legacy; keep warning evidence independent of listing format.
+            payload['detail_warnings'] = self.detail_warnings
         self._last_raw_payload = payload
         return records
 
@@ -135,6 +141,23 @@ class HumbleSpider:
     def detail_failures(self) -> List[Dict[str, str]]:
         """Return isolated Next-format detail failures from the last scrape."""
         return [dict(failure) for failure in self._detail_failures]
+
+    @property
+    def detail_warnings(self) -> List[Dict]:
+        """Return accepted source-data discrepancies from the last scrape."""
+        return [dict(warning) for warning in self._detail_warnings]
+
+    def _record_detail_warning(self, machine_name: str, warning: Dict) -> None:
+        entry = {'machine_name': machine_name, **warning}
+        self._detail_warnings.append(entry)
+        logger.warning(
+            'Accepted bundle detail count overage for %s: Humble reports %s '
+            'items, parsed %s (%s extra; limit 3)',
+            machine_name,
+            warning['reported'],
+            warning['parsed'],
+            warning['excess'],
+        )
 
     def _record_detail_failure(self, machine_name: str, reason: str) -> None:
         failure = {
@@ -371,6 +394,10 @@ class HumbleSpider:
                 item['price_tiers'] = detail.price_tiers
                 item['book_list'] = detail.book_list
                 item['msrp_total'] = detail.msrp_total
+                if detail.scrape_warnings is not None:
+                    item['scrape_warnings'] = [
+                        dict(warning) for warning in detail.scrape_warnings
+                    ]
                 # Guardar HTML raw para tests
                 item['raw_html'] = detail.raw_html
                 for field in ('featured_image', 'tile_logo', 'marketing_blurb'):
@@ -406,4 +433,7 @@ class HumbleSpider:
                 raise HumbleSpiderError(
                     f'Bundle inválido {machine_name}; no se guardó el catálogo: {exc}') from exc
             records.append(record)
+            if detail and detail.scrape_warnings:
+                for warning in detail.scrape_warnings:
+                    self._record_detail_warning(machine_name, warning)
         return records

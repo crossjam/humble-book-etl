@@ -82,4 +82,82 @@ describe("bundle tier labels", () => {
 
     expect(wrapper.findAll(".chip")[0].text()).toBe(formatCurrency(5));
   });
+
+  it("highlights warned bundles and explains the count discrepancy accessibly", () => {
+    i18n.global.locale.value = "en";
+    const warnedBundle: Bundle = {
+      ...bundle,
+      scrape_warnings: [{
+        code: "total_items_overcount",
+        reported: 24,
+        parsed: 25,
+        excess: 1,
+      }],
+    };
+    const card = mount(BundleCard, { props: { bundle: warnedBundle } });
+    const featured = mount(FeaturedBundle, { props: { bundle: warnedBundle } });
+
+    for (const wrapper of [card, featured]) {
+      const badge = wrapper.find(".data-warning");
+      expect(badge.exists()).toBe(true);
+      expect(badge.text()).toContain("Data warning");
+      expect(badge.text()).toContain("Humble reports 24 · parsed 25");
+      expect(badge.attributes("aria-label")).toContain(
+        "Humble reports 24 items; 25 were parsed (1 extra).",
+      );
+    }
+  });
+
+  it("localizes the warning indicator and its explanation", () => {
+    i18n.global.locale.value = "es";
+    const warnedBundle: Bundle = {
+      ...bundle,
+      scrape_warnings: [{
+        code: "total_items_overcount",
+        reported: 24,
+        parsed: 25,
+        excess: 1,
+      }],
+    };
+    const wrapper = mount(BundleCard, { props: { bundle: warnedBundle } });
+
+    expect(wrapper.find(".data-warning").text()).toContain("Advertencia de datos");
+    expect(wrapper.find(".data-warning").text()).toContain(
+      "Humble indica 24 · procesados 25",
+    );
+    expect(wrapper.find(".data-warning").attributes("aria-label")).toContain(
+      "Humble indica 24 elementos; se procesaron 25 (1 de más).",
+    );
+  });
+
+  it("labels retained warning counts as last verified after an unverified scrape", () => {
+    i18n.global.locale.value = "en";
+    const unverifiedBundle: Bundle = {
+      ...bundle,
+      book_list: [{ machine_name: "one", title: "One book" }],
+      scrape_warnings: [{
+        code: "total_items_overcount",
+        reported: 24,
+        parsed: 25,
+        excess: 1,
+        status: "unverified",
+        current_parsed: 1,
+      }],
+    };
+    const card = mount(BundleCard, { props: { bundle: unverifiedBundle } });
+    const featured = mount(FeaturedBundle, { props: { bundle: unverifiedBundle } });
+
+    for (const wrapper of [card, featured]) {
+      const badge = wrapper.find(".data-warning");
+      expect(badge.text()).toContain(
+        "Last verified: 24 reported · 25 parsed; now 1 parsed, source count unavailable",
+      );
+      expect(badge.attributes("aria-label")).toContain(
+        "The current bundle has 1 parsed items",
+      );
+      expect(badge.attributes("aria-label")).toContain(
+        "The previous discrepancy remains unverified.",
+      );
+    }
+  });
 });

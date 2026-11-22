@@ -24,6 +24,7 @@ class BundleResponse(BaseModel):
     featured_image: Optional[str] = None
     tile_logo: Optional[str] = None
     msrp_total: Optional[float] = None
+    scrape_warnings: List[Dict[str, Any]] = Field(default_factory=list)
     verification_date: datetime
 
 
@@ -66,6 +67,8 @@ class ETLRunResponse(BaseModel):
     bundles_seen: int | None = None
     bundles_skipped: int = 0
     skipped_bundle_ids: List[str] = Field(default_factory=list)
+    bundles_warned: int = 0
+    warning_bundle_ids: List[str] = Field(default_factory=list)
 
 
 class LandingPageRawDataResponse(BaseModel):

@@ -58,6 +58,7 @@ class Bundle(Base):
     featured_image = Column(String)  # URL de imagen destacada extraída de div.img-container
     msrp_total = Column(Float)
     raw_html = Column(String)  # HTML raw del bundle para tests
+    scrape_warnings = Column(JSON, nullable=False, default=list, server_default='[]')
 
 
 class BundleLifecycleEvent(Base):

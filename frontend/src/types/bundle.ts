@@ -29,6 +29,15 @@ export interface BookItem {
   tiers?: string[];
 }
 
+export interface BundleScrapeWarning {
+  code: string;
+  reported?: number;
+  parsed?: number;
+  excess?: number;
+  status?: "unverified";
+  current_parsed?: number;
+}
+
 export interface Bundle {
   id: string;
   machine_name: string;
@@ -45,6 +54,7 @@ export interface Bundle {
   book_list?: BookItem[];
   featured_image?: string | null;
   msrp_total?: number | null;
+  scrape_warnings?: BundleScrapeWarning[];
   verification_date?: string;
   start_date_datetime?: string;
   end_date_datetime?: string;

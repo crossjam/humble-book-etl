@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastmcp import Client
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import Session
 
 from hbetl_mcp import server
@@ -75,6 +75,45 @@ def test_catalog_exposes_bundle_and_book_metadata(tmp_path: Path, monkeypatch):
     assert book["title"] == "Example Book"
 
     catalog.engine.dispose()
+
+
+def test_standalone_catalog_reads_pre_warning_schema_without_migrating(tmp_path: Path):
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    db_path = tmp_path / "pre-warning-catalog.db"
+    settings = Settings(db_type="sqlite", db_path=str(db_path))
+    engine = create_engine(f"sqlite:///{db_path}", future=True)
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add(Bundle(
+            id="legacy-warning-schema",
+            machine_name="legacy-warning-schema",
+            tile_name="Legacy schema bundle",
+            start_date_datetime=now - timedelta(days=1),
+            end_date_datetime=now + timedelta(days=1),
+            verification_date=now,
+            is_active=True,
+            book_list=[{
+                "machine_name": "legacy-book",
+                "title": "Legacy book",
+                "authors": ["Legacy author"],
+            }],
+        ))
+        session.commit()
+    with engine.begin() as connection:
+        connection.exec_driver_sql("ALTER TABLE bundle DROP COLUMN scrape_warnings")
+    engine.dispose()
+
+    catalog = BundleCatalog(settings)
+    try:
+        assert catalog.list_bundles()[0].scrape_warnings == []
+        assert catalog.get_bundle("legacy-warning-schema").scrape_warnings == []
+        assert catalog.featured_bundle().scrape_warnings == []
+        assert catalog.search_books("Legacy author")[0].title == "Legacy book"
+        assert "scrape_warnings" not in {
+            column["name"] for column in inspect(catalog.engine).get_columns("bundle")
+        }
+    finally:
+        catalog.engine.dispose()
 
 
 def test_bundle_identifier_search_respects_inactive_filter(tmp_path: Path):

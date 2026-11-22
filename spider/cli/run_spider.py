@@ -8,6 +8,7 @@ from ..database.persistence import (
     remove_outdated_bundles,
     persist_landing_page_raw_data,
     ScrapeQualityError,
+    get_detail_warning_bundle_ids,
     get_observed_bundle_count,
     get_skipped_bundle_ids,
     validate_scrape_quality,
@@ -34,6 +35,7 @@ def main() -> None:
         raise SystemExit(f'Error ejecutando el spider: {exc}') from exc
 
     skipped_bundle_ids = get_skipped_bundle_ids(raw_data_record)
+    warning_bundle_ids = get_detail_warning_bundle_ids(raw_data_record)
     try:
         bundles_seen = get_observed_bundle_count(
             records, raw_data_record, skipped_bundle_ids,
@@ -46,6 +48,11 @@ def main() -> None:
             f'Detalles omitidos ({len(skipped_bundle_ids)}); se conservan los '
             'registros guardados anteriormente: '
             + ', '.join(skipped_bundle_ids)
+        )
+    if warning_bundle_ids:
+        print(
+            f'Discrepancias toleradas ({len(warning_bundle_ids)}): '
+            + ', '.join(warning_bundle_ids)
         )
 
     SessionFactory = get_session_factory(settings)

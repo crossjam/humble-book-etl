@@ -8,6 +8,7 @@ interface ETLRunResponse {
   bundles_processed: number;
   cleanup_ran: boolean;
   bundles_skipped?: number;
+  bundles_warned?: number;
 }
 
 interface UseBundlesOptions {

@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, HttpUrl, field_validator
 from pydantic.config import ConfigDict
@@ -87,6 +87,7 @@ class BundleRecord(BaseModel):
     featured_image: Optional[str] = Field(default=None, max_length=2048)
     msrp_total: Optional[float] = None
     raw_html: Optional[str] = Field(default=None, description='HTML raw del bundle para tests')
+    scrape_warnings: List[Dict[str, Any]] = Field(default_factory=list)
 
     @field_validator('hero_highlights', 'hover_highlights', 'highlights', mode='before')
     @classmethod

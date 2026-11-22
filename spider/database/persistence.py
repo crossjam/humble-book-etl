@@ -113,6 +113,34 @@ def get_skipped_bundle_ids(
     return get_skipped_bundle_ids_from_payload(raw_data_record.json_data)
 
 
+def get_detail_warning_bundle_ids(
+    raw_data_record: LandingPageRawDataRecord | None,
+) -> list[str]:
+    """Return unique bundle identities with tolerated detail discrepancies."""
+    if raw_data_record is None:
+        return []
+    payload = raw_data_record.json_data
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except (ValueError, TypeError):
+            return []
+    if not isinstance(payload, dict):
+        return []
+    warnings = payload.get('detail_warnings', [])
+    if not isinstance(warnings, list):
+        return []
+    return list(dict.fromkeys(
+        warning['machine_name']
+        for warning in warnings
+        if (
+            isinstance(warning, dict)
+            and isinstance(warning.get('machine_name'), str)
+            and warning['machine_name'].strip()
+        )
+    ))
+
+
 def get_skipped_bundle_ids_from_payload(payload: object) -> list[str]:
     """Read quarantined identities from a raw snapshot payload."""
     if isinstance(payload, str):
@@ -570,6 +598,19 @@ def ensure_columns(engine) -> None:
         except Exception as exc:
             raise RuntimeError('Could not add required bundle.archived_at column') from exc
 
+    if 'scrape_warnings' not in columns:
+        try:
+            with engine.begin() as connection:
+                connection.execute(text(
+                    "ALTER TABLE bundle ADD COLUMN scrape_warnings "
+                    "JSON NOT NULL DEFAULT '[]'"
+                ))
+                logger.info('Added required bundle.scrape_warnings column')
+        except Exception as exc:
+            raise RuntimeError(
+                'Could not add required bundle.scrape_warnings column'
+            ) from exc
+
     if 'archived_at' in columns or archive_column_needed:
         try:
             with engine.begin() as connection:
@@ -643,6 +684,31 @@ def _preserve_book_metadata(incoming: list[dict], previous: object) -> list[dict
     return merged_books
 
 
+def _mark_item_count_warnings_unverified(
+    warnings: object, current_book_list: list[dict],
+) -> list[dict]:
+    """Keep prior overcount evidence distinct from a newly parsed book count."""
+    if not isinstance(warnings, list):
+        return []
+    current_count = len(current_book_list)
+    updated = []
+    found_count_warning = False
+    for warning in warnings:
+        if (
+            isinstance(warning, dict)
+            and warning.get('code') == 'total_items_overcount'
+        ):
+            updated.append({
+                **warning,
+                'status': 'unverified',
+                'current_parsed': current_count,
+            })
+            found_count_warning = True
+        else:
+            updated.append(warning)
+    return updated if found_count_warning else []
+
+
 def persist_bundles(
     records: Iterable[BundleRecord],
     session: Session,
@@ -684,6 +750,16 @@ def persist_bundles(
                     payload['book_list'] = _preserve_book_metadata(
                         payload['book_list'], existing.book_list,
                     )
+                    if 'scrape_warnings' not in payload:
+                        # The detail was refreshed, but no positive totalItems
+                        # was available to verify an earlier overcount. Keep
+                        # the previous evidence and label its counts as stale.
+                        unverified_warnings = _mark_item_count_warnings_unverified(
+                            existing.scrape_warnings,
+                            payload['book_list'],
+                        )
+                        if unverified_warnings:
+                            payload['scrape_warnings'] = unverified_warnings
                 _track_existing_bundle_change(
                     session,
                     existing,

@@ -65,6 +65,19 @@ products carry no schedule dates in the normalized snapshot, so lifecycle replay
 cannot infer a change from an unvalidated detail. CLI output and the API
 `/etl/run` response report skipped bundle IDs; the UI reports the skipped count.
 
+A positive `totalItems` discrepancy is tolerated only when the parsed unique
+book-key count is 1–3 higher than Humble's reported count. Undercounts, larger
+overcounts and invalid counts remain detail failures. Accepted discrepancies
+are logged per bundle, saved in the raw snapshot's `detail_warnings`, persisted
+on the bundle as `scrape_warnings`, and exposed in API/MCP bundle responses.
+The ETL result reports warned IDs/count, and both the featured card and bundle
+cards display an accessible warning badge with the reported/parsed counts.
+A later successful detail with a matching positive count clears the warning;
+missing/null counts and legacy details leave the prior warning intact because
+they cannot verify it. If such a detail refreshes the book list, the prior
+warning is marked unverified and the UI distinguishes its last-verified counts
+from the current parsed count.
+
 Both ETL entrypoints then apply the existing whole-catalog quality gate to the
 successfully enriched records **before any snapshot, archive, or upsert write**.
 Catalog loss is measured against identities in the listing, not only records
@@ -126,6 +139,9 @@ prove an all-failed or quality-gate-rejected run writes nothing. API ETL
 regressions also prove invalid metadata returns HTTP 502
 without changing retained book metadata, verification time, lifecycle flags,
 or stored snapshots.
+Overcounts up to three have parser boundary tests plus end-to-end API/CLI
+coverage for warning logs, raw-snapshot evidence, database/API serialization
+and the localized card warning badge.
 
 Real-parser API and CLI regressions also inject an unsupported channel into an
 otherwise valid listing or detail page and verify rejection before any ETL write.
@@ -136,4 +152,6 @@ and book details. Do not invoke `run_spider` or `/etl/run` for a dry run: those
 write the catalog. Compare identities against the existing database and run
 `validate_scrape_quality` using a read-only connection or a disposable copy.
 Review the results before rebuilding/restarting production and triggering ETL.
-This migration needs no schema changes and no frontend changes.
+Startup adds the non-null `bundle.scrape_warnings` JSON column to existing
+databases; no manual migration is needed. The frontend consumes the API warning
+field and shows it on the affected bundle cards.

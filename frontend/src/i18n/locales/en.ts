@@ -54,6 +54,7 @@ export default {
       title: 'Update result:',
       bundlesProcessed: 'bundles processed',
       bundlesSkipped: 'bundles skipped (previous data retained)',
+      bundlesWarned: 'bundles updated with source data warnings',
     },
     tabs: {
       activeBundles: 'Active Bundles',
@@ -101,6 +102,12 @@ export default {
     ends: 'Ends',
     endingToday: 'Ending today',
     endingTomorrow: 'Ending tomorrow',
+    dataWarning: 'Data warning',
+    sourceDataWarning: 'The source bundle data has a discrepancy.',
+    itemCountWarning: 'Humble reports {reported} items; {parsed} were parsed ({excess} extra).',
+    itemCountSummary: 'Humble reports {reported} · parsed {parsed}',
+    itemCountUnverifiedWarning: 'Last verified: Humble reported {reported} items and {parsed} were parsed. The current bundle has {currentParsed} parsed items, but Humble’s current item count is unavailable. The previous discrepancy remains unverified.',
+    itemCountUnverifiedSummary: 'Last verified: {reported} reported · {parsed} parsed; now {currentParsed} parsed, source count unavailable',
     viewBundle: 'View bundle →',
   },
   bookModal: {

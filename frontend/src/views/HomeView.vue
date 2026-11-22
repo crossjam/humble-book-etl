@@ -67,6 +67,9 @@
             <li v-if="etlResult.bundles_skipped">
               <strong>{{ etlResult.bundles_skipped }}</strong> {{ $t('app.etlResult.bundlesSkipped') }}
             </li>
+            <li v-if="etlResult.bundles_warned">
+              <strong>{{ etlResult.bundles_warned }}</strong> {{ $t('app.etlResult.bundlesWarned') }}
+            </li>
           </ul>
         </div>
       </div>

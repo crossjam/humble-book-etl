@@ -54,6 +54,7 @@ export default {
       title: 'Resultado de actualización:',
       bundlesProcessed: 'bundles procesados',
       bundlesSkipped: 'bundles omitidos (se conservan los datos anteriores)',
+      bundlesWarned: 'bundles actualizados con advertencias en los datos de origen',
     },
     tabs: {
       activeBundles: 'Bundles Activos',
@@ -101,6 +102,12 @@ export default {
     ends: 'Termina',
     endingToday: 'Termina hoy',
     endingTomorrow: 'Termina mañana',
+    dataWarning: 'Advertencia de datos',
+    sourceDataWarning: 'Los datos de origen del bundle tienen una discrepancia.',
+    itemCountWarning: 'Humble indica {reported} elementos; se procesaron {parsed} ({excess} de más).',
+    itemCountSummary: 'Humble indica {reported} · procesados {parsed}',
+    itemCountUnverifiedWarning: 'Último conteo verificado: Humble indicó {reported} elementos y se procesaron {parsed}. El bundle actual contiene {currentParsed} elementos procesados, pero el total actual de Humble no está disponible. La discrepancia anterior sigue sin verificarse.',
+    itemCountUnverifiedSummary: 'Último conteo verificado: {reported} indicados · {parsed} procesados; ahora {currentParsed}, total de origen no disponible',
     viewBundle: 'Ver bundle →',
   },
   bookModal: {

@@ -10,6 +10,24 @@
       />
       <div class="hero-info">
         <p class="eyebrow">{{ $t('featured.eyebrow') }}</p>
+        <span
+          v-if="warningDescription"
+          class="data-warning"
+          role="status"
+          :aria-label="warningDescription"
+          :title="warningDescription"
+        >
+          <span aria-hidden="true">⚠</span> {{ $t('bundleCard.dataWarning') }}
+          <span v-if="countWarning">
+            {{ $t(countWarning.status === 'unverified'
+              ? 'bundleCard.itemCountUnverifiedSummary'
+              : 'bundleCard.itemCountSummary', {
+              reported: countWarning.reported,
+              parsed: countWarning.parsed,
+              currentParsed: countWarning.current_parsed ?? 0,
+            }) }}
+          </span>
+        </span>
         <h2>{{ bundle.tile_name }}</h2>
         <p class="msrp">{{ $t('featured.estimatedMsrp') }} ${{ bundle.msrp_total ?? "—" }}</p>
         <div v-if="displayTiers.length" class="chip-group">
@@ -52,7 +70,27 @@ const props = defineProps<{
   bundle: Bundle | null;
 }>();
 
-const { locale } = useI18n();
+const { locale, t } = useI18n();
+const countWarning = computed(() =>
+  props.bundle?.scrape_warnings?.find(
+    (warning) => warning.code === "total_items_overcount",
+  ),
+);
+const warningDescription = computed(() => {
+  const warnings = props.bundle?.scrape_warnings ?? [];
+  if (!warnings.length) return "";
+  if (countWarning.value) {
+    return t(countWarning.value.status === "unverified"
+      ? "bundleCard.itemCountUnverifiedWarning"
+      : "bundleCard.itemCountWarning", {
+      reported: countWarning.value.reported,
+      parsed: countWarning.value.parsed,
+      excess: countWarning.value.excess,
+      currentParsed: countWarning.value.current_parsed ?? 0,
+    });
+  }
+  return t("bundleCard.sourceDataWarning");
+});
 const displayTiers = computed(() =>
   (props.bundle?.price_tiers ?? [])
     .slice(0, 3)
@@ -123,6 +161,21 @@ const handleImageError = (event: Event) => {
     letter-spacing: 0.1em;
     font-size: 0.75rem;
     margin-bottom: 8px;
+  }
+
+  .data-warning {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    width: fit-content;
+    padding: 3px 9px;
+    border: 1px solid var(--highlight);
+    border-radius: 999px;
+    background: var(--error-bg);
+    color: var(--text);
+    font-size: 0.75rem;
+    font-weight: 700;
+    line-height: 1.4;
   }
 
   h2 {
