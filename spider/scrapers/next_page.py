@@ -194,8 +194,13 @@ def listing_products(page: NextPage) -> list[dict]:
             if value.get('category') != 'books':
                 continue
             key = value.get('productKey')
-            if not isinstance(key, str) or not key or not value.get('endDate'):
+            if not isinstance(key, str) or not key.strip() or not value.get('endDate'):
                 raise ValueError('Book bundle is missing identity or end date')
+            # Use the same canonical identity in per-product results, detail
+            # lookups, persistence, and the raw snapshot. Preserve the original
+            # bytes in `page.flight`; reject canonical collisions below.
+            key = key.strip()
+            value['productKey'] = key
             if not isinstance(value.get('title'), str) or not value['title'].strip():
                 raise ValueError('Book bundle is missing its title')
             if not isinstance(value.get('url'), str) or not value['url'].startswith('/books/'):

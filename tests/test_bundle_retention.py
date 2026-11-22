@@ -47,6 +47,32 @@ def test_existing_schema_gets_archive_timestamp_column(engine):
 
     columns = {column["name"] for column in inspect(engine).get_columns("bundle")}
     assert "archived_at" in columns
+    assert "scrape_warnings" in columns
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "INSERT INTO bundle (id, machine_name) VALUES ('legacy', 'legacy')"
+        )
+        warnings = connection.exec_driver_sql(
+            "SELECT scrape_warnings FROM bundle WHERE id = 'legacy'"
+        ).scalar_one()
+    assert warnings == "[]"
+
+
+def test_existing_bundle_schema_reads_migrated_warning_column_as_json(engine):
+    with Session(engine) as session:
+        session.add(Bundle(
+            id="pre-warning",
+            machine_name="pre-warning",
+            verification_date=datetime(2026, 9, 1),
+        ))
+        session.commit()
+    with engine.begin() as connection:
+        connection.exec_driver_sql("ALTER TABLE bundle DROP COLUMN scrape_warnings")
+
+    ensure_columns(engine)
+
+    with Session(engine) as session:
+        assert session.get(Bundle, "pre-warning").scrape_warnings == []
 
 
 def test_expired_bundle_is_archived_instead_of_deleted(engine):

@@ -32,6 +32,24 @@
         >
           {{ $t(`bundleCard.${endingStatus}`) }}
         </span>
+        <span
+          v-if="warningDescription"
+          class="data-warning"
+          role="status"
+          :aria-label="warningDescription"
+          :title="warningDescription"
+        >
+          <span aria-hidden="true">⚠</span> {{ $t('bundleCard.dataWarning') }}
+          <span v-if="countWarning">
+            {{ $t(countWarning.status === 'unverified'
+              ? 'bundleCard.itemCountUnverifiedSummary'
+              : 'bundleCard.itemCountSummary', {
+              reported: countWarning.reported,
+              parsed: countWarning.parsed,
+              currentParsed: countWarning.current_parsed ?? 0,
+            }) }}
+          </span>
+        </span>
       </p>
       <p class="msrp">MSRP: ${{ bundle.msrp_total ?? "—" }}</p>
       <div class="tiers" v-if="displayTiers.length">
@@ -67,11 +85,31 @@ import { priceTierLabel } from "@/utils/priceTierLabel";
 
 const props = defineProps<{ bundle: Bundle }>();
 
-const { locale } = useI18n();
+const { locale, t } = useI18n();
 const showModal = ref(false);
 const endingStatus = computed(() =>
   getBundleEndingStatus(props.bundle.end_date_datetime),
 );
+const countWarning = computed(() =>
+  props.bundle.scrape_warnings?.find(
+    (warning) => warning.code === "total_items_overcount",
+  ),
+);
+const warningDescription = computed(() => {
+  const warnings = props.bundle.scrape_warnings ?? [];
+  if (!warnings.length) return "";
+  if (countWarning.value) {
+    return t(countWarning.value.status === "unverified"
+      ? "bundleCard.itemCountUnverifiedWarning"
+      : "bundleCard.itemCountWarning", {
+      reported: countWarning.value.reported,
+      parsed: countWarning.value.parsed,
+      excess: countWarning.value.excess,
+      currentParsed: countWarning.value.current_parsed ?? 0,
+    });
+  }
+  return t("bundleCard.sourceDataWarning");
+});
 const displayTiers = computed(() =>
   (props.bundle.price_tiers ?? [])
     .slice(0, 2)
@@ -181,6 +219,22 @@ const handleImageError = (event: Event) => {
     font-weight: 700;
     line-height: 1.4;
     white-space: nowrap;
+  }
+
+  .data-warning {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: 8px;
+    padding: 3px 9px;
+    border: 1px solid var(--highlight);
+    border-radius: 999px;
+    background: var(--error-bg);
+    color: var(--text);
+    font-size: 0.75rem;
+    font-weight: 700;
+    line-height: 1.4;
+    white-space: normal;
   }
 
   .msrp {

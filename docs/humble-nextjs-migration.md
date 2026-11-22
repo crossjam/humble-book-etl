@@ -53,10 +53,41 @@ than being filtered into destructive empty-list replacements.
 Missing optional metadata stays unknown rather than being invented. No fake
 start date is substituted for the listing's missing date.
 
-Legacy listing and detail adapters remain available. A Next listing requires
-successful detail parsing for **every** bundle; any failure aborts the run.
-Invalid schedules, missing identities, and Pydantic failures also abort instead
-of discarding rows while announcing success.
+Legacy listing and detail adapters remain available. A malformed Next listing
+(for example, unsupported Flight framing, conflicting/duplicate identities, or
+an empty feed) still aborts the run.
+
+An individual Next detail fetch, parse, schedule, or record-validation failure
+is quarantined instead of aborting healthy bundles. The record is omitted from
+this run, its prior database row is not upserted, and its product key plus
+failure reason are recorded in the raw snapshot's `detail_failures`. Failed
+products carry no schedule dates in the normalized snapshot, so lifecycle replay
+cannot infer a change from an unvalidated detail. CLI output and the API
+`/etl/run` response report skipped bundle IDs; the UI reports the skipped count.
+
+A positive `totalItems` discrepancy is tolerated only when the parsed unique
+book-key count is 1–3 higher than Humble's reported count. Undercounts, larger
+overcounts and invalid counts remain detail failures. Accepted discrepancies
+are logged per bundle, saved in the raw snapshot's `detail_warnings`, persisted
+on the bundle as `scrape_warnings`, and exposed in API/MCP bundle responses.
+The ETL result reports warned IDs/count, and both the featured card and bundle
+cards display an accessible warning badge with the reported/parsed counts.
+A later successful detail with a matching positive count clears the warning;
+missing/null counts and legacy details leave the prior warning intact because
+they cannot verify it. If such a detail refreshes the book list, the prior
+warning is marked unverified and the UI distinguishes its last-verified counts
+from the current parsed count.
+
+Both ETL entrypoints then apply the existing whole-catalog quality gate to the
+successfully enriched records **before any snapshot, archive, or upsert write**.
+Catalog loss is measured against identities in the listing, not only records
+with successful details; additionally, at least half of listed bundles must
+have valid details and at least one record must remain. If either threshold is
+exceeded, the entire run is refused and no records are written. Thus one bad
+detail does not block healthy bundles, while a widespread source failure still
+fails closed. The expiration cleanup also excludes quarantined IDs for that
+run, so a stale previously stored schedule cannot archive a possibly extended
+bundle whose current detail was unavailable.
 
 ## Persistence and discovery safeguards
 
@@ -100,15 +131,20 @@ Run offline tests from the repository root:
 `tests/fixtures/next/README.md` documents the reduced public-page captures.
 Tests cover split frames, unsupported channels/control shapes, Unicode byte
 lengths, reference paths/cycles, malformed pages, both source formats, missing
-details, pricing, catalog quality,
-retained enrichment, malformed collection members, lifecycle replay and read-time
-expiration. API ETL regressions also prove invalid metadata returns HTTP 502
+details, partial detail failures, pricing, catalog quality, retained enrichment,
+malformed collection members, lifecycle replay and read-time expiration. CLI
+and API regressions prove one invalid detail is skipped while healthy bundles
+persist and prior metadata for the skipped bundle remains unchanged; they also
+prove an all-failed or quality-gate-rejected run writes nothing. API ETL
+regressions also prove invalid metadata returns HTTP 502
 without changing retained book metadata, verification time, lifecycle flags,
 or stored snapshots.
+Overcounts up to three have parser boundary tests plus end-to-end API/CLI
+coverage for warning logs, raw-snapshot evidence, database/API serialization
+and the localized card warning badge.
 
 Real-parser API and CLI regressions also inject an unsupported channel into an
-otherwise valid listing or detail page and verify rejection before any ETL write,
-even when the partial channel-1 catalog would pass the count-loss quality gate.
+otherwise valid listing or detail page and verify rejection before any ETL write.
 
 Before deployment, back up the SQLite database, then do a live **read-only**
 fetch with `HumbleSpider.fetch_bundles()` and inspect counts, IDs, dates, tiers
@@ -116,4 +152,6 @@ and book details. Do not invoke `run_spider` or `/etl/run` for a dry run: those
 write the catalog. Compare identities against the existing database and run
 `validate_scrape_quality` using a read-only connection or a disposable copy.
 Review the results before rebuilding/restarting production and triggering ETL.
-This migration needs no schema changes and no frontend changes.
+Startup adds the non-null `bundle.scrape_warnings` JSON column to existing
+databases; no manual migration is needed. The frontend consumes the API warning
+field and shows it on the affected bundle cards.

@@ -129,6 +129,7 @@ El sistema implementa un pipeline ETL (Extract, Transform, Load) para obtener, n
 │     featured_image              VARCHAR                         │
 │     msrp_total                  FLOAT                           │
 │     raw_html                    TEXT                            │
+│     scrape_warnings             TEXT (JSON) NOT NULL             │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -240,7 +241,7 @@ Cada evento conserva `machine_name`, el `bundle_id` cuando existe, tipo (`extend
   - `_fetch_raw_payload()`: hace GET, detecta JSON legacy o Flight y levanta `HumbleSpiderError` si el payload no es válido.
   - `_extract_products()`: adapta `feedItems` Next o todos los mosaics legacy; rechaza catálogo vacío o identidades duplicadas.
   - `_normalize_products()`: usa pandas para limpiar, convertir fechas a UTC, serializar campos JSON, normalizar texto, absolutizar URLs y calcular `duration_days`/`is_active`.
-  - `_to_records()`: obtiene detalle, fusiona fechas reales y enriquecimiento, recalcula disponibilidad/duración y valida con Pydantic. Cualquier registro inválido aborta el scrape; el formato Next exige detalle válido.
+  - `_to_records()`: obtiene detalle, fusiona fechas reales y enriquecimiento, recalcula disponibilidad/duración y valida con Pydantic. En Next, omite y registra fallos de bundle individuales; discrepancias de conteo de hasta 3 títulos se guardan y registran como advertencias.
 - `core/errors.py`: define excepciones de dominio `HumbleSpiderError`.
 
 ### Scrapers
@@ -251,12 +252,13 @@ Cada evento conserva `machine_name`, el `bundle_id` cuando existe, tipo (`extend
   - `_extract_book_list()`: extrae `machine_name`, título, autores/creadores, editoriales, descripción, formatos, imágenes, MSRP, preview, tipo de contenido y tiers. Los datos provienen de `bundleData.tier_item_data`, el mismo payload que alimenta el panel de detalle abierto por los enlaces `href="#"` de la página.
   - `_safe_amount()`: extrae valores numéricos de objetos de dinero del JSON.
   - `next_page.py`: parser Flight limitado con presupuestos de tamaño/profundidad/expansión, texto UTF-8 por bytes, referencias exactas y paths React; no evalúa JavaScript.
-  - Incluye dataclass `BundleDetails` con price_tiers, book_list, msrp_total, raw_html y fechas/imágenes opcionales.
+  - Incluye dataclass `BundleDetails` con price_tiers, book_list, msrp_total, raw_html, advertencias y fechas/imágenes opcionales.
 
 ### Schemas
 
 - `schemas/bundle.py`: modelo Pydantic `BundleRecord`.
   - Define todos los campos del bundle con aliases (ej. `start_date|datetime`), longitudes máximas y tipos (`HttpUrl`, `datetime`, `float`).
+  - `scrape_warnings` conserva discrepancias de detalle para la API, MCP y la interfaz.
   - Validadores: convierten highlights a string, controlan no negativos en `bundles_sold_decimal`/`duration_days`.
   - `to_orm_payload()`: adapta el diccionario para la capa ORM (cambia `type`→`_type`, cast de URL a string).
 - `schemas/raw_data.py`: modelo Pydantic `LandingPageRawDataRecord`.
@@ -276,7 +278,7 @@ Cada evento conserva `machine_name`, el `bundle_id` cuando existe, tipo (`extend
   - `persist_landing_page_raw_data`: inserta el JSON bruto de landingPage con metadata.
   - `remove_outdated_bundles`: archiva bundles con `end_date_datetime` en el pasado sin eliminar sus metadatos; `archived_at` marca el período archivado actual y se reinicia si el bundle reaparece válidamente.
   - `recreate_database`: elimina el archivo SQLite si existe y recrea tablas y columnas.
-  - `ensure_columns` y `ensure_landing_page_raw_data_table`: migraciones rápidas en SQL crudo para añadir columnas/tablas si faltan (usando tipos SQLite: TEXT, REAL, VARCHAR).
+  - `ensure_columns` y `ensure_landing_page_raw_data_table`: migraciones rápidas para añadir columnas/tablas si faltan; `bundle.scrape_warnings` se agrega con valor inicial `[]`.
 
 ### Configuración
 
@@ -326,8 +328,8 @@ El payload de extracción puede almacenarse con `get_raw_data_record()` y
 ## Consideraciones y limitaciones
 
 - Los datos Flight son un contrato de aplicación no documentado por Humble. Cambios futuros pueden detener el ETL y requieren revisar el adaptador, no relajar sus validaciones.
-- Los detalles se descargan secuencialmente. En Next cualquier fallo aborta el scrape; en legacy el detalle puede faltar sin borrar enriquecimiento previo.
-- Todos los registros deben pasar Pydantic y tener fechas válidas. No se inventan fechas ni se anuncia éxito después de descartar registros.
+- Los detalles se descargan secuencialmente. En Next, un detalle fallido omite solo ese bundle y deja intacta su fila previa (también evita archivarla durante esa ejecución); sus claves/errores quedan en el snapshot y el resultado ETL. El control de calidad compara la cantidad del listado original, requiere al menos 50% de detalles válidos y rechaza cero registros o pérdidas de catálogo mayores al 50%, antes de cualquier escritura.
+- Los registros Next que se persisten deben pasar Pydantic y tener fechas válidas. No se inventan fechas para los omitidos; el snapshot parcial no los usa para replay de calendario.
 - Una caída legítima de más del 50% requiere investigación del operador; no existe un bypass automático del control de calidad.
 - Las migraciones de esquema se realizan con SQL crudo simple (`ensure_*`); no hay sistema de migraciones formal.
 

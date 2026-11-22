@@ -24,6 +24,7 @@ from ..utils.transformers import (
     compute_duration_days,
     compute_is_active,
     normalize_columns,
+    normalize_text,
     serialize_list,
     safe_float,
 )
@@ -71,6 +72,8 @@ class HumbleSpider:
         )
         self.detail_scraper = BundleDetailScraper(self.session)
         self._last_raw_payload: Optional[Dict] = None
+        self._detail_failures: List[Dict[str, str]] = []
+        self._detail_warnings: List[Dict] = []
 
     def close(self) -> None:
         if self._owns_session:
@@ -96,24 +99,77 @@ class HumbleSpider:
             HumbleSpiderError: Si hay un error al obtener o procesar los datos.
         """
         self._last_raw_payload = None
+        self._detail_failures = []
+        self._detail_warnings = []
         payload = self._fetch_raw_payload()
         products = self._extract_products(payload)
         is_next = payload.get('format') == NEXT_FORMAT
         try:
-            frame = self._normalize_products(products)
+            frame = self._normalize_products(products, next_source=is_next)
             records = self._to_records(frame, require_details=is_next)
         except (TypeError, ValueError, AttributeError, RecursionError) as exc:
             raise HumbleSpiderError(f'No se pudo normalizar el catálogo: {exc}') from exc
         if is_next:
             # Retain actual detail dates alongside the untouched Flight stream,
             # so lifecycle replay has the same window as the persisted record.
+            # A product whose detail failed is kept in the listing snapshot for
+            # catalog-count baselines, but carries no inferred schedule.
             by_key = {record.machine_name: record for record in records}
             for product in payload['products']:
-                record = by_key[product['productKey']]
+                product.pop('start_date|datetime', None)
+                product.pop('end_date|datetime', None)
+                record = by_key.get(product['productKey'])
+                if record is None:
+                    for date_field in (
+                        'startDate', 'endDate',
+                        'start_date|datetime', 'end_date|datetime',
+                    ):
+                        product.pop(date_field, None)
+                    continue
                 product['startDate'] = record.start_date_datetime.isoformat()
                 product['endDate'] = record.end_date_datetime.isoformat()
+            if self._detail_failures:
+                payload['detail_failures'] = self.detail_failures
+        if self._detail_warnings:
+            # Detail pages can already be on the Next format while the listing
+            # is still legacy; keep warning evidence independent of listing format.
+            payload['detail_warnings'] = self.detail_warnings
         self._last_raw_payload = payload
         return records
+
+    @property
+    def detail_failures(self) -> List[Dict[str, str]]:
+        """Return isolated Next-format detail failures from the last scrape."""
+        return [dict(failure) for failure in self._detail_failures]
+
+    @property
+    def detail_warnings(self) -> List[Dict]:
+        """Return accepted source-data discrepancies from the last scrape."""
+        return [dict(warning) for warning in self._detail_warnings]
+
+    def _record_detail_warning(self, machine_name: str, warning: Dict) -> None:
+        entry = {'machine_name': machine_name, **warning}
+        self._detail_warnings.append(entry)
+        logger.warning(
+            'Accepted bundle detail count overage for %s: Humble reports %s '
+            'items, parsed %s (%s extra; limit 3)',
+            machine_name,
+            warning['reported'],
+            warning['parsed'],
+            warning['excess'],
+        )
+
+    def _record_detail_failure(self, machine_name: str, reason: str) -> None:
+        failure = {
+            'machine_name': machine_name,
+            'reason': (reason or 'Bundle detail unavailable or invalid')[:500],
+        }
+        self._detail_failures.append(failure)
+        logger.warning(
+            'Skipping bundle %s after detail validation failed: %s',
+            machine_name,
+            failure['reason'],
+        )
 
     def get_raw_data_record(self) -> Optional[LandingPageRawDataRecord]:
         """
@@ -215,7 +271,9 @@ class HumbleSpider:
             raise HumbleSpiderError(
                 'Estructura JSON inesperada al obtener productos') from exc
 
-    def _normalize_products(self, products: List[Dict]) -> pd.DataFrame:
+    def _normalize_products(
+        self, products: List[Dict], *, next_source: bool = False,
+    ) -> pd.DataFrame:
         """
         Normaliza y transforma los productos en un DataFrame de pandas.
 
@@ -232,7 +290,11 @@ class HumbleSpider:
         Returns:
             DataFrame de pandas con los productos normalizados.
         """
-        frame = pd.json_normalize(products)
+        # The Next adapter already maps the listing onto flat schema fields.
+        # Don't flatten dictionary-valued malformed scalars (for example a
+        # dict in `description`) into dotted extra columns; Pydantic must see
+        # and quarantine the bad field on its own bundle.
+        frame = pd.json_normalize(products, max_level=0 if next_source else None)
         if frame.empty:
             return frame
 
@@ -240,7 +302,7 @@ class HumbleSpider:
         frame.dropna(axis=1, how='all', inplace=True)
 
         for column in self.DATETIME_COLUMNS:
-            if column in frame.columns:
+            if column in frame.columns and not next_source:
                 frame[column] = pd.to_datetime(
                     frame[column], errors='coerce', utc=True)
 
@@ -248,7 +310,18 @@ class HumbleSpider:
             if column in frame.columns:
                 frame[column] = frame[column].apply(serialize_list)
 
-        normalize_columns(frame, self.TEXT_COLUMNS)
+        if next_source:
+            # Preserve malformed per-product values for BundleRecord validation
+            # below. A list in one optional text field must not make pandas
+            # abort normalization for every otherwise valid bundle.
+            for column in self.TEXT_COLUMNS:
+                if column in frame.columns:
+                    frame[column] = frame[column].apply(
+                        lambda value: normalize_text(value)
+                        if isinstance(value, str) else value
+                    )
+        else:
+            normalize_columns(frame, self.TEXT_COLUMNS)
 
         if 'product_url' in frame.columns:
             frame['product_url'] = frame['product_url'].apply(absolute_url)
@@ -257,16 +330,21 @@ class HumbleSpider:
             frame['bundles_sold|decimal'] = frame['bundles_sold|decimal'].apply(
                 safe_float)
 
-        frame['duration_days'] = frame.apply(
-            lambda row: compute_duration_days(
-                row.get('start_date|datetime'), row.get('end_date|datetime')),
-            axis=1,
-        )
-        frame['is_active'] = frame.apply(
-            lambda row: compute_is_active(
-                row.get('start_date|datetime'), row.get('end_date|datetime')),
-            axis=1,
-        )
+        if next_source:
+            # The authoritative Next schedule is read per-bundle below.
+            frame['duration_days'] = None
+            frame['is_active'] = False
+        else:
+            frame['duration_days'] = frame.apply(
+                lambda row: compute_duration_days(
+                    row.get('start_date|datetime'), row.get('end_date|datetime')),
+                axis=1,
+            )
+            frame['is_active'] = frame.apply(
+                lambda row: compute_is_active(
+                    row.get('start_date|datetime'), row.get('end_date|datetime')),
+                axis=1,
+            )
 
         return frame
 
@@ -282,8 +360,9 @@ class HumbleSpider:
             frame: DataFrame con productos normalizados.
 
         Returns:
-            Lista de BundleRecord validados. Un registro inválido aborta
-            el scrape antes de persistir.
+            Lista de BundleRecord validados. En el formato Next, un fallo
+            aislado omite solo ese bundle; la calidad del catálogo completo
+            se valida antes de cualquier escritura.
         """
         if frame.empty:
             return []
@@ -293,13 +372,32 @@ class HumbleSpider:
         frame = frame.astype(object).where(pd.notna(frame), None)
         for item in frame.to_dict(orient='records'):
             machine_name = item.get('machine_name')
-            detail = self.detail_scraper.fetch_bundle_details(item.get('product_url'))
+            try:
+                detail = self.detail_scraper.fetch_bundle_details(
+                    item.get('product_url')
+                )
+            except (
+                AttributeError, IndexError, KeyError, RecursionError,
+                TypeError, ValueError,
+            ) as exc:
+                if not require_details:
+                    raise
+                self._record_detail_failure(machine_name, str(exc))
+                continue
             if require_details and detail is None:
-                raise HumbleSpiderError(f'Detalle incompleto para {machine_name}; no se guardó el catálogo')
+                self._record_detail_failure(
+                    machine_name,
+                    self.detail_scraper.last_error or 'Bundle detail unavailable or invalid',
+                )
+                continue
             if detail:
                 item['price_tiers'] = detail.price_tiers
                 item['book_list'] = detail.book_list
                 item['msrp_total'] = detail.msrp_total
+                if detail.scrape_warnings is not None:
+                    item['scrape_warnings'] = [
+                        dict(warning) for warning in detail.scrape_warnings
+                    ]
                 # Guardar HTML raw para tests
                 item['raw_html'] = detail.raw_html
                 for field in ('featured_image', 'tile_logo', 'marketing_blurb'):
@@ -314,7 +412,7 @@ class HumbleSpider:
                     if value is not None:
                         item[field] = pd.to_datetime(value, utc=True, errors='coerce')
                 # tile_logo ya viene del JSON inicial, pero verificar que esté normalizado
-                if 'tile_logo' in item and item['tile_logo']:
+                if isinstance(item.get('tile_logo'), str) and item['tile_logo']:
                     item['tile_logo'] = absolute_url(item['tile_logo'])
                     logger.debug('tile_logo extraído para %s: %s', machine_name, item.get('tile_logo'))
             try:
@@ -325,8 +423,17 @@ class HumbleSpider:
                 item['duration_days'] = compute_duration_days(start, end)
                 item['is_active'] = compute_is_active(start, end)
                 record = BundleRecord.model_validate(item)
-            except (ValidationError, ValueError) as exc:
+            except (
+                ValidationError, ValueError, TypeError, AttributeError,
+                RecursionError,
+            ) as exc:
+                if require_details:
+                    self._record_detail_failure(machine_name, str(exc))
+                    continue
                 raise HumbleSpiderError(
                     f'Bundle inválido {machine_name}; no se guardó el catálogo: {exc}') from exc
             records.append(record)
+            if detail and detail.scrape_warnings:
+                for warning in detail.scrape_warnings:
+                    self._record_detail_warning(machine_name, warning)
         return records

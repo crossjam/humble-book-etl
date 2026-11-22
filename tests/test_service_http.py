@@ -33,6 +33,12 @@ BOOK_METADATA = {
     "tiers": ["bt10"],
     "preview": {"url": "https://example.test/preview"},
 }
+SOURCE_WARNING = {
+    "code": "total_items_overcount",
+    "reported": 24,
+    "parsed": 25,
+    "excess": 1,
+}
 
 # Report readiness only after uvicorn has completed both application lifespans
 # and bound its ephemeral port. No polling, reserved-port race, or external DB.
@@ -112,6 +118,7 @@ def service_http(tmp_path_factory):
                         "machine_name": f"{identifier}-book",
                         "title": f"Transport Book {identifier.title()}",
                     }],
+                    scrape_warnings=[SOURCE_WARNING] if identifier == "current" else [],
                     raw_html=f"<html>Retained {identifier}</html>",
                 ))
             session.commit()
@@ -182,6 +189,8 @@ def test_api_and_mcp_over_http(service_http, monkeypatch):
             assert health == {"status": "ok", "database": str(db_path)}
             active = await get("/bundles")
             assert {bundle["id"] for bundle in active} == ACTIVE_IDS
+            current = next(bundle for bundle in active if bundle["id"] == "current")
+            assert current["scrape_warnings"] == [SOURCE_WARNING]
             featured = await get("/bundles/featured")
             assert featured["id"] == "featured"
 
@@ -199,6 +208,9 @@ def test_api_and_mcp_over_http(service_http, monkeypatch):
                 assert detail["id"] == identifier
                 assert detail["book_list"][0]["authors"] == BOOK_METADATA["authors"]
                 assert detail["price_tiers"] == [{"name": "bt10", "price": 10}]
+                assert detail["scrape_warnings"] == (
+                    [SOURCE_WARNING] if identifier == "current" else []
+                )
                 assert "raw_html" not in detail
                 details[identifier] = detail
             assert details["expired"]["is_active"] is True
@@ -272,6 +284,8 @@ def test_api_and_mcp_over_http(service_http, monkeypatch):
             assert {bundle["id"] for bundle in bundles} == {
                 bundle["id"] for bundle in active
             }
+            current = next(bundle for bundle in bundles if bundle["id"] == "current")
+            assert current["scrape_warnings"] == [SOURCE_WARNING]
             retained = await call("list_bundles", {"include_inactive": True})
             assert {bundle["id"] for bundle in retained} == RETAINED_IDS
             assert {bundle["id"] for bundle in retained if bundle["is_active"]} == ACTIVE_IDS
@@ -280,6 +294,7 @@ def test_api_and_mcp_over_http(service_http, monkeypatch):
             for identifier in RETAINED_IDS:
                 bundle = await call("get_bundle", {"identifier": identifier})
                 assert bundle["id"] == details[identifier]["id"]
+                assert bundle["scrape_warnings"] == details[identifier]["scrape_warnings"]
                 assert bundle["is_active"] is (identifier in ACTIVE_IDS)
                 for field, value in details[identifier]["book_list"][0].items():
                     assert bundle["books"][0][field] == value

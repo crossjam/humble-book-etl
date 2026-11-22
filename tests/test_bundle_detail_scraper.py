@@ -34,6 +34,7 @@ def test_fetch_bundle_details_accepts_an_httpx_client():
     assert details is not None
     assert details.book_list[0]['title'] == 'Book One'
     assert details.msrp_total == 10.0
+    assert details.scrape_warnings is None
 
 
 def test_extract_book_list_includes_detail_panel_metadata():

@@ -64,6 +64,12 @@
           <h4>{{ $t('app.etlResult.title') }}</h4>
           <ul>
             <li><strong>{{ etlResult.bundles_processed }}</strong> {{ $t('app.etlResult.bundlesProcessed') }}</li>
+            <li v-if="etlResult.bundles_skipped">
+              <strong>{{ etlResult.bundles_skipped }}</strong> {{ $t('app.etlResult.bundlesSkipped') }}
+            </li>
+            <li v-if="etlResult.bundles_warned">
+              <strong>{{ etlResult.bundles_warned }}</strong> {{ $t('app.etlResult.bundlesWarned') }}
+            </li>
           </ul>
         </div>
       </div>

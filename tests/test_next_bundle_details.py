@@ -117,6 +117,7 @@ def test_next_details_normalize_metadata_and_deduplicate_cumulative_membership()
     assert details.price_tiers[0]['items'] == [FIRST_KEY]
     assert details.price_tiers[1]['items'] == [SECOND_KEY, FIRST_KEY]
     assert details.price_tiers[1]['price'] == {'amount': 18.0, 'currency': 'USD'}
+    assert details.scrape_warnings == []
     assert details.book_list == [
         {
             'machine_name': FIRST_KEY,
@@ -147,6 +148,66 @@ def test_next_details_normalize_metadata_and_deduplicate_cumulative_membership()
             'tiers': [SECOND_SKU],
         },
     ]
+
+
+@pytest.mark.parametrize('extra_items', [1, 3])
+def test_next_details_accept_and_report_small_item_count_overcounts(extra_items):
+    bundle = next_bundle()
+    bundle['tiers'][1]['bundleItems'].extend(
+        {
+            'key': f'extra-book-{index}',
+            'title': f'Extra Book {index}',
+        }
+        for index in range(extra_items)
+    )
+
+    details = fetch(flight_html(bundle))
+
+    assert details is not None
+    assert len(details.book_list) == 2 + extra_items
+    assert details.scrape_warnings == [{
+        'code': 'total_items_overcount',
+        'reported': 2,
+        'parsed': 2 + extra_items,
+        'excess': extra_items,
+    }]
+
+
+def test_next_details_reject_item_count_overcount_greater_than_three(caplog):
+    bundle = next_bundle()
+    bundle['tiers'][1]['bundleItems'].extend(
+        {
+            'key': f'extra-book-{index}',
+            'title': f'Extra Book {index}',
+        }
+        for index in range(4)
+    )
+
+    assert fetch(flight_html(bundle)) is None
+    assert (
+        'Cantidad de libros parseados excede el total reportado por más de 3'
+        in caplog.text
+    )
+
+
+@pytest.mark.parametrize('value', [None, '$undefined'])
+def test_next_details_leave_item_count_unverified_when_absent_or_null(value):
+    bundle = next_bundle()
+    bundle['totalItems'] = value
+    details = fetch(flight_html(bundle))
+
+    assert details is not None
+    assert details.scrape_warnings is None
+
+
+def test_next_details_leave_missing_item_count_unverified():
+    bundle = next_bundle()
+    del bundle['totalItems']
+
+    details = fetch(flight_html(bundle))
+
+    assert details is not None
+    assert details.scrape_warnings is None
 
 
 def test_next_details_match_requested_slug_not_first_recommendation():
@@ -211,6 +272,8 @@ def test_next_details_fall_back_to_actual_tier_id_without_sku():
         lambda bundle: bundle.update(totalItems=3),
         lambda bundle: bundle.update(totalItems='2'),
         lambda bundle: bundle.update(totalItems=True),
+        lambda bundle: bundle.update(totalItems=0),
+        lambda bundle: bundle.update(totalItems=-1),
     ],
 )
 def test_next_details_fail_closed_on_empty_or_malformed_data(mutate, caplog):
@@ -335,6 +398,7 @@ def test_next_details_preserve_meaningful_publisher_and_format_values():
     ('developers', [{'name': 'Valid Author'}, {}]),
     ('publishers', [{'name': 'Valid Press'}, None]),
     ('platforms', ['pdf', 123]),
+    ('thumbnailImageUrl', {'unexpected': 'not a URL'}),
 ])
 def test_invalid_metadata_aborts_api_etl_without_clearing_retained_values(
     field, members, tmp_path, monkeypatch,
