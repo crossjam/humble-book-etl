@@ -243,7 +243,8 @@ class BundleDetailScraper:
                     )
                 if overcount > 3:
                     raise ValueError(
-                        'Cantidad total de libros excede el detalle por más de '
+                        'Cantidad de libros parseados excede el total reportado '
+                        'por más de '
                         f'3: reported={total_items}, parsed={len(books)}'
                     )
                 if overcount:

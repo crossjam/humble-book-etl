@@ -184,7 +184,10 @@ def test_next_details_reject_item_count_overcount_greater_than_three(caplog):
     )
 
     assert fetch(flight_html(bundle)) is None
-    assert 'excede el detalle por más de 3' in caplog.text
+    assert (
+        'Cantidad de libros parseados excede el total reportado por más de 3'
+        in caplog.text
+    )
 
 
 @pytest.mark.parametrize('value', [None, '$undefined'])
