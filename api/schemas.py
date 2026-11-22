@@ -63,6 +63,9 @@ class BundleRawHtmlResponse(BaseModel):
 class ETLRunResponse(BaseModel):
     bundles_processed: int
     cleanup_ran: bool
+    bundles_seen: int | None = None
+    bundles_skipped: int = 0
+    skipped_bundle_ids: List[str] = Field(default_factory=list)
 
 
 class LandingPageRawDataResponse(BaseModel):

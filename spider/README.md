@@ -240,7 +240,7 @@ Cada evento conserva `machine_name`, el `bundle_id` cuando existe, tipo (`extend
   - `_fetch_raw_payload()`: hace GET, detecta JSON legacy o Flight y levanta `HumbleSpiderError` si el payload no es válido.
   - `_extract_products()`: adapta `feedItems` Next o todos los mosaics legacy; rechaza catálogo vacío o identidades duplicadas.
   - `_normalize_products()`: usa pandas para limpiar, convertir fechas a UTC, serializar campos JSON, normalizar texto, absolutizar URLs y calcular `duration_days`/`is_active`.
-  - `_to_records()`: obtiene detalle, fusiona fechas reales y enriquecimiento, recalcula disponibilidad/duración y valida con Pydantic. Cualquier registro inválido aborta el scrape; el formato Next exige detalle válido.
+  - `_to_records()`: obtiene detalle, fusiona fechas reales y enriquecimiento, recalcula disponibilidad/duración y valida con Pydantic. En Next, omite y registra fallos de bundle individuales; CLI/API aplican después el control de calidad al conjunto antes de escribir.
 - `core/errors.py`: define excepciones de dominio `HumbleSpiderError`.
 
 ### Scrapers
@@ -326,8 +326,8 @@ El payload de extracción puede almacenarse con `get_raw_data_record()` y
 ## Consideraciones y limitaciones
 
 - Los datos Flight son un contrato de aplicación no documentado por Humble. Cambios futuros pueden detener el ETL y requieren revisar el adaptador, no relajar sus validaciones.
-- Los detalles se descargan secuencialmente. En Next cualquier fallo aborta el scrape; en legacy el detalle puede faltar sin borrar enriquecimiento previo.
-- Todos los registros deben pasar Pydantic y tener fechas válidas. No se inventan fechas ni se anuncia éxito después de descartar registros.
+- Los detalles se descargan secuencialmente. En Next, un detalle fallido omite solo ese bundle y deja intacta su fila previa (también evita archivarla durante esa ejecución); sus claves/errores quedan en el snapshot y el resultado ETL. El control de calidad compara la cantidad del listado original, requiere al menos 50% de detalles válidos y rechaza cero registros o pérdidas de catálogo mayores al 50%, antes de cualquier escritura.
+- Los registros Next que se persisten deben pasar Pydantic y tener fechas válidas. No se inventan fechas para los omitidos; el snapshot parcial no los usa para replay de calendario.
 - Una caída legítima de más del 50% requiere investigación del operador; no existe un bypass automático del control de calidad.
 - Las migraciones de esquema se realizan con SQL crudo simple (`ensure_*`); no hay sistema de migraciones formal.
 

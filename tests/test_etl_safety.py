@@ -10,6 +10,7 @@ from spider.database.models import Base, Bundle, BundleLifecycleEvent, LandingPa
 from spider.database.persistence import (
     ScrapeQualityError,
     backfill_lifecycle_events_from_raw_data,
+    get_observed_bundle_count,
     persist_bundles,
     remove_outdated_bundles,
     validate_scrape_quality,
@@ -330,6 +331,89 @@ def test_quality_gate_accepts_bootstrap_without_baseline(engine):
         validate_scrape_quality([record()], session, now=NOW)
 
 
+def test_partial_detail_failures_use_listing_count_for_catalog_loss_gate(engine):
+    with Session(engine) as session:
+        add_snapshot(session, count=3)
+        # 2 products were listed, 1 detail failed, and the one valid record is
+        # exactly half of the observed listing. Compare catalog loss using 2,
+        # not the single successfully enriched record.
+        validate_scrape_quality(
+            [record('good-bundle')],
+            session,
+            now=NOW,
+            observed_count=2,
+            skipped_bundle_ids=['failed-bundle'],
+        )
+
+        with pytest.raises(ScrapeQualityError, match='detail failures exceed 50%'):
+            validate_scrape_quality(
+                [record('good-bundle')],
+                session,
+                now=NOW,
+                observed_count=3,
+                skipped_bundle_ids=['failed-bundle-1', 'failed-bundle-2'],
+            )
+
+
+def test_observed_count_requires_exact_processed_and_skipped_source_identities():
+    good = record('good-bundle')
+    raw = LandingPageRawDataRecord(
+        source_url='https://example.invalid/books',
+        json_data={
+            'format': 'humble-next-flight-v1',
+            'products': [
+                {'productKey': 'good-bundle'},
+                {'productKey': 'failed-bundle'},
+            ],
+        },
+    )
+
+    assert get_observed_bundle_count([good], raw, ['failed-bundle']) == 2
+    with pytest.raises(ScrapeQualityError, match='identities do not match'):
+        get_observed_bundle_count([good], raw, ['not-in-source'])
+    with pytest.raises(ScrapeQualityError, match='identities do not match'):
+        get_observed_bundle_count([good], raw)
+
+
+def test_observed_count_does_not_fall_back_on_malformed_source_snapshot():
+    good = record('good-bundle')
+    raw = LandingPageRawDataRecord(
+        source_url='https://example.invalid/books',
+        json_data={'format': 'humble-next-flight-v1', 'products': [{'productKey': ''}]},
+    )
+    with pytest.raises(ScrapeQualityError, match='trustworthy bundle count'):
+        get_observed_bundle_count([good], raw)
+
+
+def test_cleanup_does_not_archive_a_quarantined_bundle(engine):
+    with Session(engine) as session:
+        quarantined = Bundle(
+            machine_name='quarantined-bundle',
+            start_date_datetime=NOW - timedelta(days=10),
+            end_date_datetime=NOW - timedelta(hours=1),
+            is_active=True,
+        )
+        other_expired = Bundle(
+            machine_name='other-expired-bundle',
+            start_date_datetime=NOW - timedelta(days=10),
+            end_date_datetime=NOW - timedelta(hours=1),
+            is_active=True,
+        )
+        session.add_all([quarantined, other_expired])
+        session.commit()
+
+        remove_outdated_bundles(
+            session,
+            now=NOW,
+            exclude_machine_names=['quarantined-bundle'],
+        )
+
+        assert quarantined.is_active is True
+        assert quarantined.archived_at is None
+        assert other_expired.is_active is False
+        assert other_expired.archived_at == NOW
+
+
 @pytest.mark.parametrize('records, message', [
     ([], 'zero bundles'),
     ([record(), record()], 'duplicate bundles'),
@@ -357,8 +441,13 @@ def test_cli_quality_failure_precedes_snapshot_archive_and_upsert(engine, monkey
     fake_spider.__enter__ = Mock(return_value=fake_spider)
     fake_spider.__exit__ = Mock(return_value=False)
     fake_spider.fetch_bundles.return_value = [record(f'new-{index}') for index in range(count)]
+    current_payload = snapshot_payload(count)
+    for index, product in enumerate(
+        current_payload['data']['books']['mosaic'][0]['products']
+    ):
+        product['machine_name'] = f'new-{index}'
     fake_spider.get_raw_data_record.return_value = LandingPageRawDataRecord(
-        json_data=snapshot_payload(count),
+        json_data=current_payload,
         source_url='https://www.humblebundle.com/books',
         scraped_date=NOW,
     )
@@ -432,3 +521,34 @@ def test_lifecycle_replay_retains_known_dates_across_unenriched_observation(engi
 
         assert backfill_lifecycle_events_from_raw_data(session) == 1
         assert session.query(BundleLifecycleEvent).one().event_type == 'extended'
+
+
+def test_lifecycle_replay_ignores_schedule_in_quarantined_snapshot(engine):
+    first = snapshot_payload(1, 'next')
+    first['products'][0].update({
+        'startDate': '2026-11-01T18:00:00Z',
+        'endDate': '2026-11-15T18:00:00Z',
+    })
+    failed_observation = snapshot_payload(1, 'next')
+    failed_observation['products'][0].update({
+        'start_date|datetime': '2026-11-01T18:00:00Z',
+        'end_date|datetime': '2026-11-20T18:00:00Z',
+    })
+    failed_observation['detail_failures'] = [{
+        'machine_name': 'bundle-0',
+        'reason': 'detail rejected',
+    }]
+    last = snapshot_payload(1, 'next')
+    last['products'][0].update({
+        'startDate': '2026-11-01T18:00:00Z',
+        'endDate': '2026-11-25T18:00:00Z',
+    })
+    with Session(engine) as session:
+        add_snapshot(session, payload=first, when=NOW - timedelta(days=3))
+        add_snapshot(session, payload=failed_observation, when=NOW - timedelta(days=2))
+        add_snapshot(session, payload=last, when=NOW - timedelta(days=1))
+
+        assert backfill_lifecycle_events_from_raw_data(session) == 1
+        event = session.query(BundleLifecycleEvent).one()
+        assert event.previous_end_at == datetime(2026, 11, 15, 18)
+        assert event.new_end_at == datetime(2026, 11, 25, 18)

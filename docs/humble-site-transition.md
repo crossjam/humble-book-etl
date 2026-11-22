@@ -57,14 +57,18 @@ deployment time**.
 
 ## Guardrails that matter
 
-1. A Next-format run needs valid details for every bundle. Invalid identities,
-   schedules, prices, or records stop the scrape instead of silently dropping
-   rows and announcing success. Only the observed bootstrap (`0`) and text (`1`)
-   Flight channels are accepted; unknown channels fail even if channel `1`
-   still contains a plausible partial catalog.
+1. A malformed listing, unsupported Flight channel, empty feed, or duplicate
+   identity still fails closed. An individual bundle detail/record failure is
+   quarantined: healthy bundles can update, the skipped bundle's previous row is
+   left untouched, and the failure is recorded in the raw snapshot and ETL
+   result. Expiration cleanup also leaves quarantined IDs alone for that run.
+   Only the observed bootstrap (`0`) and text (`1`) Flight channels are accepted.
 2. Both ETL entry points reject empty/duplicate results or a catalog count loss
    **greater than 50%** against the trusted snapshot/current-catalog baseline,
-   before snapshot/archive/upsert writes.
+   before snapshot/archive/upsert writes. Catalog loss is measured using
+   identities observed in the listing, not just the records enriched
+   successfully; at least half of listed bundles must also have valid details.
+   A widespread detail failure still blocks all writes.
 3. Unknown/null metadata does not erase existing enrichment. Explicit empty
    lists remain meaningful; removed books are not restored by metadata merging.
    Malformed members in nonempty author/publisher/format lists fail the scrape,

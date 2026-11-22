@@ -8,6 +8,8 @@ from ..database.persistence import (
     remove_outdated_bundles,
     persist_landing_page_raw_data,
     ScrapeQualityError,
+    get_observed_bundle_count,
+    get_skipped_bundle_ids,
     validate_scrape_quality,
 )
 
@@ -28,9 +30,23 @@ def main() -> None:
             print('Iniciando HumbleSpider...')
             records = spider.fetch_bundles()
             raw_data_record = spider.get_raw_data_record()
-            print(f'Bundles obtenidos: {len(records)}')
     except HumbleSpiderError as exc:
         raise SystemExit(f'Error ejecutando el spider: {exc}') from exc
+
+    skipped_bundle_ids = get_skipped_bundle_ids(raw_data_record)
+    try:
+        bundles_seen = get_observed_bundle_count(
+            records, raw_data_record, skipped_bundle_ids,
+        )
+    except ScrapeQualityError as exc:
+        raise SystemExit(f'Error de calidad del scrape: {exc}') from exc
+    print(f'Bundles obtenidos: {len(records)} de {bundles_seen}')
+    if skipped_bundle_ids:
+        print(
+            f'Detalles omitidos ({len(skipped_bundle_ids)}); se conservan los '
+            'registros guardados anteriormente: '
+            + ', '.join(skipped_bundle_ids)
+        )
 
     SessionFactory = get_session_factory(settings)
     with SessionFactory() as session:
@@ -38,6 +54,8 @@ def main() -> None:
             validate_scrape_quality(
                 records, session,
                 now=raw_data_record.scraped_date if raw_data_record else None,
+                observed_count=bundles_seen,
+                skipped_bundle_ids=skipped_bundle_ids,
             )
         except ScrapeQualityError as exc:
             raise SystemExit(f'Error de calidad del scrape: {exc}') from exc
@@ -48,7 +66,11 @@ def main() -> None:
             raw_data = persist_landing_page_raw_data(raw_data_record, session)
 
         print('Limpiando bundles expirados...')
-        remove_outdated_bundles(session, now=raw_data_record.scraped_date if raw_data_record else None)
+        remove_outdated_bundles(
+            session,
+            now=raw_data_record.scraped_date if raw_data_record else None,
+            exclude_machine_names=skipped_bundle_ids,
+        )
         print('Persistiendo bundles...')
         persist_bundles(
             records,
@@ -57,7 +79,10 @@ def main() -> None:
             source_snapshot_id=raw_data.id if raw_data else None,
         )
 
-        print('¡Proceso completado exitosamente!')
+        if raw_data_record and raw_data_record.json_data.get('detail_failures'):
+            print('¡Proceso completado con omisiones parciales!')
+        else:
+            print('¡Proceso completado exitosamente!')
 
 
 if __name__ == '__main__':

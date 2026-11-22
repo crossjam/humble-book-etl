@@ -21,8 +21,8 @@ class ScrapeQualityError(RuntimeError):
     """A suspicious scrape must not modify snapshots or the bundle catalog."""
 
 
-def _snapshot_product_count(payload: object) -> int | None:
-    """Count only complete, recognizable Books snapshots, not other categories."""
+def _snapshot_product_ids(payload: object) -> list[str] | None:
+    """Return identities from complete, recognizable Books snapshots."""
     if isinstance(payload, str):
         try:
             payload = json.loads(payload)
@@ -59,21 +59,101 @@ def _snapshot_product_count(payload: object) -> int | None:
         names.append(name.strip())
     if len(set(names)) != len(names):
         return None
-    return len(names)
+    return names
+
+
+def _snapshot_product_count(payload: object) -> int | None:
+    """Count only complete, recognizable Books snapshots, not other categories."""
+    identities = _snapshot_product_ids(payload)
+    return len(identities) if identities is not None else None
+
+
+def get_observed_bundle_count(
+    records: Sequence[BundleRecord],
+    raw_data_record: LandingPageRawDataRecord | None,
+    skipped_bundle_ids: Sequence[str] = (),
+) -> int:
+    """Count source listing identities, including bundles with failed details."""
+    if not records and not skipped_bundle_ids:
+        # The quality gate rejects zero successful records immediately. No
+        # source count is needed to make this case safe.
+        return 0
+    if raw_data_record is not None:
+        source_ids = _snapshot_product_ids(raw_data_record.json_data)
+        if source_ids is None:
+            raise ScrapeQualityError(
+                'Raw source snapshot does not contain a trustworthy bundle count'
+            )
+        processed_ids = [record.machine_name for record in records]
+        skipped_ids = list(skipped_bundle_ids)
+        if (
+            any(not isinstance(name, str) or not name.strip() for name in skipped_ids)
+            or len(set(processed_ids)) != len(processed_ids)
+            or len(set(skipped_ids)) != len(skipped_ids)
+            or set(processed_ids).intersection(skipped_ids)
+            or set(processed_ids).union(skipped_ids) != set(source_ids)
+        ):
+            raise ScrapeQualityError(
+                'Processed and skipped bundle identities do not match the raw source listing'
+            )
+        return len(source_ids)
+    if skipped_bundle_ids:
+        raise ScrapeQualityError(
+            'Skipped bundle identities have no trustworthy raw source snapshot'
+        )
+    return len(records)
+
+
+def get_skipped_bundle_ids(
+    raw_data_record: LandingPageRawDataRecord | None,
+) -> list[str]:
+    """Return unique identities quarantined during per-bundle detail parsing."""
+    if raw_data_record is None:
+        return []
+    return get_skipped_bundle_ids_from_payload(raw_data_record.json_data)
+
+
+def get_skipped_bundle_ids_from_payload(payload: object) -> list[str]:
+    """Read quarantined identities from a raw snapshot payload."""
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except (ValueError, TypeError):
+            return []
+    if not isinstance(payload, dict):
+        return []
+    failures = payload.get('detail_failures', [])
+    if not isinstance(failures, list):
+        return []
+    return list(dict.fromkeys(
+        failure['machine_name']
+        for failure in failures
+        if (
+            isinstance(failure, dict)
+            and isinstance(failure.get('machine_name'), str)
+            and failure['machine_name'].strip()
+        )
+    ))
 
 
 def validate_scrape_quality(
     records: Sequence[BundleRecord],
     session: Session,
     now: datetime | None = None,
+    *,
+    observed_count: int | None = None,
+    skipped_bundle_ids: Sequence[str] | None = None,
 ) -> None:
-    """Fail closed on an empty scrape or a sudden loss of over half the catalog.
+    """Validate source-listing coverage and the number of usable bundle details.
 
     The latest recognizable, nonempty Books snapshot is the historical baseline.
     Also consider currently valid active rows, so a truncated legacy snapshot
     cannot weaken an otherwise trustworthy catalog baseline. Archived/expired
-    historical rows and unrelated/malformed snapshots are never counted.
-    This function performs reads only and must precede every persistence step.
+    historical rows and unrelated/malformed snapshots are never counted. A
+    partial detail scrape compares listing identities (not only successful
+    enrichments) with that catalog baseline, while also requiring at least half
+    of the listed bundles to have valid records. This function performs reads
+    only and must precede every persistence step.
     """
     count = len(records)
     if not count:
@@ -82,6 +162,34 @@ def validate_scrape_quality(
         raise ScrapeQualityError('Scrape returned an empty bundle identity; refusing all database changes')
     if len({record.machine_name for record in records}) != count:
         raise ScrapeQualityError('Scrape returned duplicate bundles; refusing all database changes')
+    skipped = list(skipped_bundle_ids or ())
+    if any(not isinstance(name, str) or not name.strip() for name in skipped):
+        raise ScrapeQualityError(
+            'Scrape returned an invalid skipped bundle identity; refusing all database changes'
+        )
+    if len(set(skipped)) != len(skipped):
+        raise ScrapeQualityError(
+            'Scrape returned duplicate skipped bundle identities; refusing all database changes'
+        )
+    if set(skipped).intersection(record.machine_name for record in records):
+        raise ScrapeQualityError(
+            'A bundle is both processed and skipped; refusing all database changes'
+        )
+    if observed_count is None:
+        observed_count = count + len(skipped)
+    if (
+        type(observed_count) is not int
+        or observed_count != count + len(skipped)
+    ):
+        raise ScrapeQualityError(
+            'Scrape source count does not match processed and skipped identities; '
+            'refusing all database changes'
+        )
+    if count * 2 < observed_count:
+        raise ScrapeQualityError(
+            f'Only {count} of {observed_count} listed bundles have valid details; '
+            'detail failures exceed 50%; refusing all database changes'
+        )
 
     current_time = _utc_naive(now) if now is not None else datetime.utcnow()
     snapshot_count = 0
@@ -104,15 +212,16 @@ def validate_scrape_quality(
         Bundle.end_date_datetime > current_time,
     ).count()
     baseline = max(snapshot_count, active_count)
-    if count * 2 < baseline:
+    if observed_count * 2 < baseline:
         raise ScrapeQualityError(
-            f'Scrape returned {count} bundles versus baseline {baseline} '
+            f'Scrape listing contained {observed_count} bundles versus baseline {baseline} '
             f'(latest snapshot: {snapshot_count}, active catalog: {active_count}); '
             'loss exceeds 50%; refusing all database changes'
         )
     logger.info(
-        'Scrape quality gate passed: %s bundles, snapshot baseline %s, active catalog %s',
-        count, snapshot_count, active_count,
+        'Scrape quality gate passed: %s valid records from %s bundles, '
+        'snapshot baseline %s, active catalog %s',
+        count, observed_count, snapshot_count, active_count,
     )
 
 
@@ -325,6 +434,11 @@ def backfill_lifecycle_events_from_raw_data(session: Session) -> int:
         if isinstance(payload, str):
             payload = json.loads(payload)
         current_products = _extract_snapshot_products(payload)
+        failed_products = set(get_skipped_bundle_ids_from_payload(payload))
+        # Keep the last known-good schedule as the comparison point. An
+        # unvalidated observation must neither emit an event nor overwrite it.
+        for machine_name in failed_products:
+            current_products.pop(machine_name, None)
         for machine_name, product in current_products.items():
             previous = previous_products.get(machine_name)
             if previous is None:
@@ -641,13 +755,18 @@ def persist_landing_page_raw_data(
 def remove_outdated_bundles(
     session: Session,
     now: datetime | None = None,
+    exclude_machine_names: Iterable[str] = (),
 ) -> None:
-    """Archive expired bundles without deleting their normalized metadata."""
+    """Archive expired rows except bundles quarantined by the current scrape."""
     current_time = _utc_naive(now) if now is not None else datetime.utcnow()
-    expired = session.query(Bundle).filter(
+    query = session.query(Bundle).filter(
         Bundle.end_date_datetime <= current_time,
         or_(Bundle.is_active.is_(True), Bundle.archived_at.is_(None)),
-    ).all()
+    )
+    excluded = {name for name in exclude_machine_names if name}
+    if excluded:
+        query = query.filter(~Bundle.machine_name.in_(excluded))
+    expired = query.all()
 
     archived_count = 0
     for bundle in expired:
@@ -657,7 +776,11 @@ def remove_outdated_bundles(
             archived_count += 1
 
     session.commit()
-    logger.info('Archived %s expired bundles', archived_count)
+    logger.info(
+        'Archived %s expired bundles; excluded %s quarantined bundles',
+        archived_count,
+        len(excluded),
+    )
 
 
 def recreate_database(settings: Settings, drop_existing: bool = True) -> None:

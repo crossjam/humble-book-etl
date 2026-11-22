@@ -46,6 +46,7 @@ class BundleDetailScraper:
                 con HTTP/2 habilitado.
         """
         self._owns_session = session is None
+        self.last_error: Optional[str] = None
         self.session = session or httpx.Client(
             http2=True,
             follow_redirects=True,
@@ -75,7 +76,9 @@ class BundleDetailScraper:
         Returns:
             BundleDetails con la información extraída o None si hay un error.
         """
+        self.last_error = None
         if not product_path:
+            self.last_error = 'Missing bundle URL'
             return None
         
         url = product_path if product_path.startswith('http') else f'{self.BASE_URL}{product_path}'
@@ -83,6 +86,7 @@ class BundleDetailScraper:
             response = self.session.get(url)
             response.raise_for_status()
         except httpx.HTTPError as exc:
+            self.last_error = str(exc)
             logger.warning('No se pudo obtener detalle del bundle %s: %s', product_path, exc)
             return None
 
@@ -94,6 +98,7 @@ class BundleDetailScraper:
         if script is None:
             return self._extract_next_details(raw_html, product_path)
         if not script.string:
+            self.last_error = 'Empty webpack-bundle-page-data script'
             logger.warning('Script webpack-bundle-page-data vacío para %s', product_path)
             return None
 
@@ -103,6 +108,7 @@ class BundleDetailScraper:
             if not isinstance(bundle_data, dict):
                 raise ValueError('bundleData no es un objeto')
         except (ValueError, KeyError, TypeError) as exc:
+            self.last_error = f'Invalid legacy detail JSON: {exc}'
             logger.warning('JSON inválido en detalle %s: %s', product_path, exc)
             return None
         
@@ -116,6 +122,7 @@ class BundleDetailScraper:
             or not all(isinstance(value, dict) for value in tier_pricing.values())
             or not all(isinstance(value, dict) for value in tier_display.values())
         ):
+            self.last_error = 'Invalid or empty legacy tiers/books'
             logger.warning('Datos de tiers/libros inválidos o vacíos para %s', product_path)
             return None
         
@@ -124,6 +131,7 @@ class BundleDetailScraper:
         
         basic_data = bundle_data.get('basic_data', {})
         if not isinstance(basic_data, dict):
+            self.last_error = 'Invalid legacy basic_data'
             logger.warning('Metadatos básicos inválidos para %s', product_path)
             return None
         msrp_total = self._safe_amount(basic_data.get('msrp|money'))
@@ -237,6 +245,7 @@ class BundleDetailScraper:
                 marketing_blurb=self._plain_text(bundle.get('headline')),
             )
         except (ValueError, KeyError, TypeError, IndexError, RecursionError) as exc:
+            self.last_error = str(exc)
             logger.warning('Detalle Next.js inválido para %s: %s', product_path, exc)
             return None
 
@@ -278,6 +287,16 @@ class BundleDetailScraper:
             if platform not in formats:
                 formats.append(platform)
         preview = item.get('previewPdf')
+        image = item.get('thumbnailImageUrl')
+        if image is not None and not isinstance(image, str):
+            raise ValueError('Imagen de libro debe ser texto o null')
+        if isinstance(image, str):
+            image = image.strip() or None
+        content_type = item.get('bundleType')
+        if content_type is not None and not isinstance(content_type, str):
+            raise ValueError('Tipo de contenido de libro debe ser texto o null')
+        if isinstance(content_type, str):
+            content_type = content_type.strip() or None
         return {
             'machine_name': item['key'],
             'title': item.get('title'),
@@ -287,9 +306,9 @@ class BundleDetailScraper:
             'description': self._plain_text(item.get('description')),
             'msrp': self._safe_amount(item.get('msrp')),
             'preview': preview if isinstance(preview, dict) else None,
-            'image': item.get('thumbnailImageUrl'),
+            'image': image,
             'detail_image': None,
-            'content_type': item.get('bundleType'),
+            'content_type': content_type,
             'formats': formats,
             'tiers': [],
         }

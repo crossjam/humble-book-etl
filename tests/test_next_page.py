@@ -1,3 +1,4 @@
+import copy
 import json
 from pathlib import Path
 
@@ -187,6 +188,35 @@ def test_feeds_deduplicate_same_identity_and_reject_conflicts():
     feed['feedItems'][1] = {'value': {**source, 'endDate': '2099-01-01'}}
     with pytest.raises(ValueError, match='Conflicting'):
         listing_products(parse_next_page(flight_html('a:' + json.dumps(feed) + '\n')))
+
+
+def test_feed_canonicalizes_whitespace_around_bundle_identity():
+    source = listing_products(
+        parse_next_page((FIXTURES / 'books.html').read_text())
+    )[0]
+    padded = copy.deepcopy(source)
+    padded['productKey'] = f" {source['productKey']} "
+
+    page = parse_next_page(flight_html(
+        'a:' + json.dumps({'feedItems': [{'value': padded}]}) + '\n'
+    ))
+
+    assert listing_products(page)[0]['productKey'] == source['productKey']
+
+
+def test_feed_rejects_conflicting_keys_after_whitespace_canonicalization():
+    source = listing_products(
+        parse_next_page((FIXTURES / 'books.html').read_text())
+    )[0]
+    padded = copy.deepcopy(source)
+    padded['productKey'] = f" {source['productKey']} "
+    padded['endDate'] = '2099-01-01T00:00:00Z'
+    feed = {'feedItems': [{'value': source}, {'value': padded}]}
+
+    with pytest.raises(ValueError, match='Conflicting'):
+        listing_products(parse_next_page(
+            flight_html('a:' + json.dumps(feed) + '\n')
+        ))
 
 
 @pytest.mark.parametrize('change', [

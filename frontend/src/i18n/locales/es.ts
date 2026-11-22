@@ -53,6 +53,7 @@ export default {
     etlResult: {
       title: 'Resultado de actualización:',
       bundlesProcessed: 'bundles procesados',
+      bundlesSkipped: 'bundles omitidos (se conservan los datos anteriores)',
     },
     tabs: {
       activeBundles: 'Bundles Activos',

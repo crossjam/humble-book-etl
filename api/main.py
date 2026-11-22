@@ -37,6 +37,8 @@ from jose import JWTError
 from spider.database.session import get_session_factory as build_session_factory
 from spider.database.persistence import (
     ScrapeQualityError,
+    get_observed_bundle_count,
+    get_skipped_bundle_ids,
     persist_bundles,
     remove_outdated_bundles,
     persist_landing_page_raw_data,
@@ -604,8 +606,18 @@ def trigger_etl(
             status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
     observed_at = raw_data_record.scraped_date if raw_data_record else None
+    skipped_bundle_ids = get_skipped_bundle_ids(raw_data_record)
     try:
-        validate_scrape_quality(records, db, now=observed_at)
+        bundles_seen = get_observed_bundle_count(
+            records, raw_data_record, skipped_bundle_ids,
+        )
+        validate_scrape_quality(
+            records,
+            db,
+            now=observed_at,
+            observed_count=bundles_seen,
+            skipped_bundle_ids=skipped_bundle_ids,
+        )
     except ScrapeQualityError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
@@ -614,7 +626,9 @@ def trigger_etl(
     if raw_data_record:
         raw_data = persist_landing_page_raw_data(raw_data_record, db)
 
-    remove_outdated_bundles(db, now=observed_at)
+    remove_outdated_bundles(
+        db, now=observed_at, exclude_machine_names=skipped_bundle_ids,
+    )
     persist_bundles(
         records,
         db,
@@ -624,7 +638,10 @@ def trigger_etl(
 
     return ETLRunResponse(
         bundles_processed=len(records),
-        cleanup_ran=True
+        cleanup_ran=True,
+        bundles_seen=bundles_seen,
+        bundles_skipped=len(skipped_bundle_ids),
+        skipped_bundle_ids=skipped_bundle_ids,
     )
 
 

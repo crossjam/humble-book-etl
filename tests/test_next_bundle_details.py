@@ -335,6 +335,7 @@ def test_next_details_preserve_meaningful_publisher_and_format_values():
     ('developers', [{'name': 'Valid Author'}, {}]),
     ('publishers', [{'name': 'Valid Press'}, None]),
     ('platforms', ['pdf', 123]),
+    ('thumbnailImageUrl', {'unexpected': 'not a URL'}),
 ])
 def test_invalid_metadata_aborts_api_etl_without_clearing_retained_values(
     field, members, tmp_path, monkeypatch,
